@@ -948,7 +948,7 @@ def list_league_events(db):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = 'BloodlineBI/2.2.5'
+    server_version = 'BloodlineBI/2.2.6'
 
     def log_message(self, fmt, *args):
         print('%s - %s' % (self.address_string(), fmt % args))
@@ -1249,6 +1249,20 @@ class Handler(BaseHTTPRequestHandler):
                     if 'password' in obj or ('active' in obj and not obj['active']):
                         db.execute('DELETE FROM sessions WHERE admin_id=?',(target_id,))
                 return self.respond(200,{'ok':True})
+            if user_route and method == 'DELETE':
+                # A exclusão definitiva de acessos é exclusiva da conta principal.
+                if not self.require_owner():return
+                target_id = int(user_route.group(1))
+                with DB_LOCK, conn_db() as db:
+                    target = db.execute('SELECT id,role FROM admins WHERE id=?',(target_id,)).fetchone()
+                    if not target:raise UserInputError('Administrador não encontrado.')
+                    if target['role'] == 'owner':
+                        raise UserInputError('A conta principal não pode ser excluída.')
+                    # Com chaves estrangeiras, as sessões deste administrador
+                    # também são apagadas; nenhuma conta principal é afetada.
+                    db.execute('DELETE FROM sessions WHERE admin_id=?',(target_id,))
+                    db.execute('DELETE FROM admins WHERE id=?',(target_id,))
+                return self.respond(200,{'ok':True})
             if path == '/api/tables' and method == 'POST':
                 with DB_LOCK, conn_db() as db:
                     header,entries=validate_table(db,obj)
@@ -1309,6 +1323,22 @@ class Handler(BaseHTTPRequestHandler):
                     db.execute('UPDATE league_events SET event_date=?,name=?,season_id=?,episode=?,updated_at=CURRENT_TIMESTAMP WHERE id=?',(*values,event_id))
                     db.commit()
                     return self.respond(200, {'ok':True})
+                if event_match and method == 'DELETE':
+                    event_id = int(event_match.group(1))
+                    ev = db.execute('SELECT * FROM league_events WHERE id=?',(event_id,)).fetchone()
+                    if not ev:raise UserInputError('Evento não encontrado.')
+                    # Os resultados da v2.2.5 não referenciam event_id diretamente.
+                    # Não excluir um EP que já possua mesas ou partidas com os
+                    # mesmos dados de temporada/data/episódio.
+                    if db.execute("SELECT 1 FROM matches WHERE season_id=? AND event_date=? AND episode=? LIMIT 1",
+                                  (ev['season_id'],ev['event_date'],ev['episode'])).fetchone() or \
+                       db.execute("SELECT 1 FROM game_tables WHERE season_id=? AND event_date=? AND episode=? LIMIT 1",
+                                  (ev['season_id'],ev['event_date'],ev['episode'])).fetchone():
+                        raise UserInputError('Este evento possui resultados ou mesas vinculadas. Preserve o histórico antes de excluí-lo.')
+                    # As inscrições pertencem exclusivamente ao evento; o
+                    # ON DELETE CASCADE as elimina, sem apagar os jogadores.
+                    db.execute('DELETE FROM league_events WHERE id=?',(event_id,))
+                    return self.respond(200,{'ok':True})
                 register_route = re.fullmatch(r'/api/admin/events/(\d+)/registrations',path)
                 if register_route and method == 'POST':
                     event_id = int(register_route.group(1))
@@ -1409,6 +1439,27 @@ class Handler(BaseHTTPRequestHandler):
                             db.execute('UPDATE seasons SET name=?,sort_order=? WHERE id=?',(name,int(order),ident))
                     else:
                         db.execute(f'UPDATE {table} SET name=? WHERE id=?',(name,ident))
+                    return self.respond(200,{'ok':True})
+                if m and method == 'DELETE':
+                    table, ident = m.group(1), int(m.group(2))
+                    if not exists(db,table,ident):
+                        raise UserInputError('Registro não encontrado.')
+                    # NUNCA remover dados de classificação, partidas, decks,
+                    # mesas ou inscrições por cascata. Exclusions são apenas
+                    # regras de temporada e podem ser descartadas junto da
+                    # temporada/tribo quando não há dados de competição.
+                    dependencies = {
+                        'seasons': [('matches','season_id'),('game_tables','season_id'),('league_events','season_id')],
+                        'players': [('matches','player_id'),('game_table_entries','player_id'),
+                                    ('game_tables','submitted_by'),('decks','player_id'),('event_registrations','player_id')],
+                        'tribes': [('matches','tribe_id'),('game_table_entries','tribe_id'),
+                                   ('decks','tribe_id'),('event_registrations','tribe_id')],
+                    }
+                    for ref_table, field in dependencies[table]:
+                        if db.execute(f'SELECT 1 FROM {ref_table} WHERE {field}=? LIMIT 1',(ident,)).fetchone():
+                            labels={'seasons':'temporada','players':'jogador','tribes':'tribo'}
+                            raise UserInputError(f'Não é possível excluir {labels[table]}: existem partidas, decks, inscrições ou eventos vinculados. Remova apenas cadastros sem histórico.')
+                    db.execute(f'DELETE FROM {table} WHERE id=?',(ident,))
                     return self.respond(200,{'ok':True})
                 if path == '/api/exclusions' and method=='POST':
                     season_id = int_id(obj.get('season_id'),'Temporada')

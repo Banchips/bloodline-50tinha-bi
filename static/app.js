@@ -144,13 +144,21 @@ async function loadAdminUsers(){
     $('adminUsersList').innerHTML=data.users.map(u=>{
       const status=u.active?'Ativo':'Desativado';
       const when=u.last_login_at?` · Último acesso: ${safe(fmtDateTime(u.last_login_at))}`:' · Ainda não acessou';
-      return `<div class="manager-item admin-user-row"><span><b>${safe(u.username)}</b> <span class="account-role">${u.role==='owner'?'Principal':'Administrador'}</span><small>${status}${when}</small></span>${u.role==='owner'?'':`<div class="mini-buttons"><button type="button" data-user-toggle="${u.id}">${u.active?'Desativar':'Reativar'}</button></div>`}</div>`;
+      return `<div class="manager-item admin-user-row"><span><b>${safe(u.username)}</b> <span class="account-role">${u.role==='owner'?'Principal':'Administrador'}</span><small>${status}${when}</small></span>${u.role==='owner'?'':`<div class="mini-buttons"><button type="button" data-user-toggle="${u.id}">${u.active?'Desativar':'Reativar'}</button><button type="button" class="danger" data-user-delete="${u.id}">Excluir</button></div>`}</div>`;
     }).join('')||'<p class="muted-note">Nenhum administrador encontrado.</p>';
     $('resetAdminUser').innerHTML='<option value="">Selecione um administrador...</option>'+data.users.filter(u=>u.role!=='owner').map(u=>`<option value="${u.id}">${safe(u.username)}</option>`).join('');
     $('adminUsersList').querySelectorAll('[data-user-toggle]').forEach(btn=>btn.addEventListener('click',async()=>{
       const u=state.admins.find(x=>x.id===Number(btn.dataset.userToggle));
       if(!u||!confirm(`${u.active?'Desativar':'Reativar'} o acesso de ${u.username}?`))return;
       try{await api(`/api/admin/users/${u.id}`,{method:'PUT',body:{active:!u.active}});toast('Acesso atualizado.');await loadAdminUsers()}
+      catch(err){toast(err.message,true)}
+    }));
+    $('adminUsersList').querySelectorAll('[data-user-delete]').forEach(btn=>btn.addEventListener('click',async()=>{
+      const u=state.admins.find(x=>x.id===Number(btn.dataset.userDelete));
+      if(!u||u.role==='owner')return;
+      const typed=prompt(`Excluir DEFINITIVAMENTE o acesso de ${u.username}?\nTodas as sessões serão encerradas.\nDigite o nome exato do usuário para confirmar:`);
+      if(typed!==u.username)return;
+      try{await api(`/api/admin/users/${u.id}`,{method:'DELETE',body:{}});toast('Acesso excluído permanentemente.');await loadAdminUsers()}
       catch(err){toast(err.message,true)}
     }));
   }catch(err){toast(err.message,true)}
@@ -177,12 +185,18 @@ function renderAdmin(){
  renderExclusions();renderAdminMatches();renderTableReview();
 }
 function renderManager(id,items,category){
- $(id).innerHTML=items.length?items.map(item=>`<div class="manager-item"><span>${safe(item.name)} ${category==='seasons'?`<small>(ordem ${item.sort_order})</small>`:''}</span><div class="mini-buttons"><button type="button" data-rename-type="${category}" data-rename-id="${item.id}">Renomear</button></div></div>`).join(''):'<p class="muted-note">Nenhum cadastro ainda.</p>';
+ $(id).innerHTML=items.length?items.map(item=>`<div class="manager-item"><span>${safe(item.name)} ${category==='seasons'?`<small>(ordem ${item.sort_order})</small>`:''}</span><div class="mini-buttons"><button type="button" data-rename-type="${category}" data-rename-id="${item.id}">Renomear</button><button type="button" class="danger" data-delete-category="${category}" data-delete-id="${item.id}">Excluir</button></div></div>`).join(''):'<p class="muted-note">Nenhum cadastro ainda.</p>';
  $(id).querySelectorAll('button[data-rename-id]').forEach(b=>b.addEventListener('click',async()=>{
    const old=items.find(i=>i.id===Number(b.dataset.renameId));const name=prompt('Novo nome:',old.name);
    if(name===null||!name.trim()||name.trim()===old.name)return;
    try{await api(`/api/${category}/${old.id}`,{method:'PUT',body:{name:name.trim()}});toast('Cadastro atualizado.');await reloadAll()}catch(err){toast(err.message,true)}
- }));
+  }));
+  $(id).querySelectorAll('button[data-delete-id]').forEach(btn=>btn.addEventListener('click',async()=>{
+    const item=items.find(x=>x.id===Number(btn.dataset.deleteId));if(!item)return;
+    if(!confirm(`Excluir ${item.name}?\n\nO sistema impedirá a exclusão se houver resultados, inscrições, decks ou eventos vinculados.`))return;
+    try{await api(`/api/${category}/${item.id}`,{method:'DELETE',body:{}});toast('Cadastro excluído.');await reloadAll();await loadLeagueEvents()}
+    catch(err){toast(err.message,true)}
+  }));
 }
 function renderExclusions(){
  const d=state.admin;if(!d)return;
@@ -395,7 +409,7 @@ function renderLeagueEvents(){
    <button class="event-list-select" type="button" data-event-open="${ev.id}" aria-pressed="${ev.id===state.selectedEventId}">
     <span class="event-day">${safe(fmtDate(ev.event_date))}</span><strong>${safe(ev.name)}</strong>
     <small>${safe(ev.season_name)} · ${safe(ev.episode)} · ${ev.total_registered} jogador(es)</small>
-   </button><button class="event-edit-btn" type="button" data-event-edit="${ev.id}" aria-label="Editar evento ${safe(ev.name)}">Editar</button>
+   </button><button class="event-edit-btn" type="button" data-event-edit="${ev.id}" aria-label="Editar evento ${safe(ev.name)}">Editar</button><button class="event-delete-btn" type="button" data-event-delete="${ev.id}" aria-label="Excluir evento ${safe(ev.name)}">Excluir</button>
   </article>`).join(''):'<p class="muted-note">Nenhum evento cadastrado. Crie o primeiro no formulário ao lado.</p>';
   $('eventList').querySelectorAll('[data-event-open]').forEach(btn=>btn.addEventListener('click',()=>{
     state.selectedEventId=Number(btn.dataset.eventOpen);renderLeagueEvents();
@@ -408,6 +422,16 @@ function renderLeagueEvents(){
     $('eventFormTitle').textContent='Editar evento';$('eventSave').textContent='Salvar evento';
     $('eventCancelEdit').classList.remove('hidden');renderLeagueEvents();
     $('eventForm').scrollIntoView({behavior:'smooth',block:'start'});
+  }));
+  $('eventList').querySelectorAll('[data-event-delete]').forEach(btn=>btn.addEventListener('click',async()=>{
+    const ev=events.find(e=>e.id===Number(btn.dataset.eventDelete));if(!ev)return;
+    if(!confirm(`Excluir o evento "${ev.name}" (${ev.season_name} · ${ev.episode}) e suas ${ev.total_registered} inscrição(ões)?\n\nEsta ação é permanente. Resultados já lançados são protegidos.`))return;
+    try{
+      await api(`/api/admin/events/${ev.id}`,{method:'DELETE',body:{}});
+      if(state.editingEventId===ev.id)resetEventForm();
+      if(state.selectedEventId===ev.id)state.selectedEventId=null;
+      await loadLeagueEvents();toast('Evento e inscrições excluídos.');
+    }catch(err){toast(err.message,true)}
   }));
   renderEventRoster();
 }

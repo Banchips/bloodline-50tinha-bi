@@ -65,3 +65,10 @@
 .event-remove:hover{background:#52323b}
 @media(max-width:900px){.event-layout{grid-template-columns:1fr}.event-register-form{grid-template-columns:1fr 1fr}.event-register-form .form-actions{grid-column:1/-1}.event-heading{flex-direction:column}}
 @media(max-width:600px){.event-register-form{grid-template-columns:1fr}.event-register-form .form-actions{grid-column:auto}}
+
+/* v2.2.6 — exclusão com ações visíveis e confirmação */
+.event-delete-btn{border:0;border-left:1px solid #6e4653;background:#352639;color:#ffb5bf;padding:10px;cursor:pointer}
+.event-delete-btn:hover,.event-delete-btn:focus-visible{background:#603244;outline:1px solid #ffabb5}
+.mini-buttons .danger{color:#ffadb5;border-color:#80535e}
+.mini-buttons .danger:hover{background:#583543}
+@media(max-width:480px){.event-edit-btn,.event-delete-btn{padding:8px;font-size:11px}}
