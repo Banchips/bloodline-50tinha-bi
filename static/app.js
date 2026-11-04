@@ -14,7 +14,7 @@ function isoFromBrazilianDate(value){
 }
 const resultLabels = {V:'Vitória · 3 pts',E:'Empate · 1 pt',D:'Derrota · 0 pts'};
 const colors = ['#c6ef50','#9e8eff','#69d7e3','#f2b47c','#f18ba8'];
-const state = {public:null, admin:null, season:'all', adminMode:false, loggedIn:false, editing:null, editingDeck:null, tables:[], canManageAdmins:false, admins:[], events:[], selectedEventId:null, editingEventId:null};
+const state = {public:null, admin:null, season:'all', adminMode:false, loggedIn:false, editing:null, editingDeck:null, tables:[], canManageAdmins:false, admins:[], events:[], selectedEventId:null, editingEventId:null, openEvents:[],selectedSignupEventId:null, inviteReturnTab:'events'};
 let toastTimer;
 function toast(msg,error=false){const t=$('toast');t.textContent=msg;t.classList.toggle('error',error);t.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('visible'),4500)}
 async function api(path,options={}){
@@ -45,6 +45,7 @@ async function loadPublic(chooseDefault=false){
     if(!chooseDefault)updateSeasonOptions(data);
     renderPublic();
   refreshPlayerForms();
+  await loadOpenEvents();
   }catch(err){toast(err.message,true)}
 }
 function renderPublic(){
@@ -109,11 +110,12 @@ function renderTrend(){
   $('trendLegend').innerHTML=visible.map((p,i)=>`<span><i class="legend-dot" style="background:${colors[i]}"></i>${safe(p.name)} · ${p.sum} pts</span>`).join('');
 }
 function showPanel(name){
-  for(const [id,panel] of [['public','publicPanel'],['admin','adminPanel'],['table','tablePanel'],['decks','decksPanel']]) $(panel).classList.toggle('hidden',id!==name);
+  for(const [id,panel] of [['public','publicPanel'],['admin','adminPanel'],['table','tablePanel'],['decks','decksPanel'],['signup','signupPanel'],['invite','invitePanel']]) $(panel).classList.toggle('hidden',id!==name);
   state.adminMode=name==='admin';window.scrollTo(0,0);
   if(name==='admin')refreshAdminSession();
   if(name==='table'){refreshPlayerForms();loadTables();}
   if(name==='decks'){refreshPlayerForms();renderDeckGallery();}
+  if(name==='signup'){loadOpenEvents(true);}
 }
 function showAdmin(yes){showPanel(yes?'admin':'public')}
 async function refreshAdminSession(){
@@ -241,7 +243,7 @@ function refreshPlayerForms(){
   $('dTribe').innerHTML=selectOptions(d.tribes||getRegisteredTribes(),tribe,'Escolha uma tribo');
   $('deckFilterPlayer').innerHTML='<option value="all">Todos os jogadores</option>'+getRegisteredPlayers().map(x=>`<option value="${x.id}">${safe(x.name)}</option>`).join('');
   $('deckFilterPlayer').value=filter||'all';
-  updateSubmitterOptions();renderDeckGallery();
+  updateSubmitterOptions();renderDeckGallery();updateSignupOptions();
 }
 function getRegisteredPlayers(){return state.admin?.master?.players||state.public?.players||[]}
 function getRegisteredTribes(){return state.admin?.master?.tribes||state.public?.tribes||[]}
@@ -402,17 +404,22 @@ function refreshEventOptions(){
   $('eventSeason').innerHTML=selectOptions(m.seasons,oldSeason|| (state.season!=='all'?state.season:m.seasons.at(-1)?.id),'Selecione a season');
   $('eventPlayer').innerHTML=selectOptions(m.players,oldPlayer,'Selecione um jogador');
   $('eventTribe').innerHTML=selectOptions(m.tribes,oldTribe,'Selecione a tribo');
+  updateEventAdminDecks();
 }
 function renderLeagueEvents(){
   const events=state.events;
   $('eventList').innerHTML=events.length?events.map(ev=>`<article class="event-list-item ${ev.id===state.selectedEventId?'selected':''}">
    <button class="event-list-select" type="button" data-event-open="${ev.id}" aria-pressed="${ev.id===state.selectedEventId}">
     <span class="event-day">${safe(fmtDate(ev.event_date))}</span><strong>${safe(ev.name)}</strong>
-    <small>${safe(ev.season_name)} · ${safe(ev.episode)} · ${ev.total_registered} jogador(es)</small>
-   </button><button class="event-edit-btn" type="button" data-event-edit="${ev.id}" aria-label="Editar evento ${safe(ev.name)}">Editar</button><button class="event-delete-btn" type="button" data-event-delete="${ev.id}" aria-label="Excluir evento ${safe(ev.name)}">Excluir</button>
+    <small>${safe(ev.season_name)} · ${safe(ev.episode)} · ${ev.total_registered} inscrito(s) · ${ev.registrations_open?'INSCRIÇÕES ABERTAS':'INSCRIÇÕES FECHADAS'}</small>
+   </button><button class="event-qr-btn" type="button" data-event-invite="${ev.id}" title="Abrir QR Code e link de inscrição" aria-label="QR Code e link para ${safe(ev.name)}">▦ QR</button><button class="event-edit-btn" type="button" data-event-edit="${ev.id}" aria-label="Editar evento ${safe(ev.name)}">Editar</button><button class="event-delete-btn" type="button" data-event-delete="${ev.id}" aria-label="Excluir evento ${safe(ev.name)}">Excluir</button>
   </article>`).join(''):'<p class="muted-note">Nenhum evento cadastrado. Crie o primeiro no formulário ao lado.</p>';
   $('eventList').querySelectorAll('[data-event-open]').forEach(btn=>btn.addEventListener('click',()=>{
     state.selectedEventId=Number(btn.dataset.eventOpen);renderLeagueEvents();
+  }));
+  $('eventList').querySelectorAll('[data-event-invite]').forEach(btn=>btn.addEventListener('click',()=>{
+    const ev=events.find(e=>e.id===Number(btn.dataset.eventInvite));
+    if(ev)showInvite(ev);
   }));
   $('eventList').querySelectorAll('[data-event-edit]').forEach(btn=>btn.addEventListener('click',()=>{
     const ev=events.find(e=>e.id===Number(btn.dataset.eventEdit));if(!ev)return;
@@ -440,11 +447,23 @@ function renderEventRoster(){
   $('eventRosterTitle').textContent=ev?ev.name:'Lista de jogadores';
   $('eventRosterSubtitle').textContent=ev?`${fmtDate(ev.event_date)} · ${ev.season_name} · ${ev.episode}`:'Cadastre e selecione um evento para inscrever jogadores.';
   $('eventRosterContent').classList.toggle('hidden',!ev);
-  $('eventRosterStats').innerHTML=ev?`<span>${ev.total_registered} inscritos</span><span>${ev.total_checkin} check-ins</span><span>${ev.total_paid} pagos</span><span>${ev.total_decklists_ok} decklists OK</span>`:'';
+  $('eventRosterStats').innerHTML=ev?`<button type="button" class="event-roster-qr" id="eventRosterQR" title="Abrir convite e QR Code">▦ QR / Link</button><span>${ev.total_registered} inscritos</span><span>${ev.total_checkin} check-ins</span><span>${ev.total_paid} pagos</span><span>${ev.total_decklists_ok} decklists OK</span><button type="button" id="toggleEventOpen" class="event-open-switch ${ev.registrations_open?'on':''}" aria-pressed="${Boolean(ev.registrations_open)}">${ev.registrations_open?'● Inscrições abertas':'○ Abrir inscrições'}</button>`:'';
+  if(ev){
+    $('eventRosterQR').addEventListener('click',()=>showInvite(ev));
+    $('toggleEventOpen').addEventListener('click',async e=>{
+      const next=!Boolean(ev.registrations_open);
+      if(!confirm(`${next?'Abrir':'Fechar'} as inscrições públicas para ${ev.name}?`))return;
+      e.currentTarget.disabled=true;
+      try{
+        await api(`/api/admin/events/${ev.id}`,{method:'PUT',body:{registrations_open:next}});
+        await loadLeagueEvents();await loadOpenEvents();toast(next?'Inscrições abertas.':'Inscrições encerradas.');
+      }catch(err){toast(err.message,true);await loadLeagueEvents()}
+    });
+  }
   if(!ev)return;
   const tribes=state.admin?.master?.tribes||[];
   $('eventRosterRows').innerHTML=ev.registrations.length?ev.registrations.map(r=>`<tr>
-    <td><strong>${safe(r.player_name)}</strong></td>
+    <td><strong>${safe(r.player_name)}</strong>${r.deck_url?`<small class="event-deck-small"><a href="${safe(r.deck_url)}" target="_blank" rel="noopener noreferrer">▤ ${safe(r.deck_name)} ↗</a></small>`:''}</td>
     <td><select class="event-tribe-select" data-event-tribe="${r.id}" aria-label="Tribo de ${safe(r.player_name)}">${tribes.map(t=>`<option value="${t.id}" ${t.id===r.tribe_id?'selected':''}>${safe(t.name)}</option>`).join('')}</select></td>
     <td><button type="button" class="event-toggle ${r.checkin?'on':''}" data-event-toggle="${r.id}" data-field="checkin" aria-pressed="${Boolean(r.checkin)}" title="${r.checkin?'Check-in confirmado':'Check-in pendente'}"><span aria-hidden="true">${r.checkin?'✓':'○'}</span><small>${r.checkin?'Feito':'Pendente'}</small></button></td>
     <td><button type="button" class="event-toggle ${r.paid?'on':''}" data-event-toggle="${r.id}" data-field="paid" aria-pressed="${Boolean(r.paid)}" title="${r.paid?'Pagamento confirmado':'Pagamento pendente'}"><span aria-hidden="true">${r.paid?'✓':'○'}</span><small>${r.paid?'Pago':'Pendente'}</small></button></td>
@@ -472,6 +491,94 @@ function renderEventRoster(){
     catch(err){toast(err.message,true)}
   }));
 }
+// Inscrições públicas: o site só exibe eventos abertos e nunca libera status administrativos.
+async function loadOpenEvents(redrawSignup=false){
+  try{
+    const data=await api('/api/events/open');
+    state.openEvents=data.events||[];
+    const open=state.openEvents.length>0;
+    $('signupNav').classList.toggle('hidden',!open);
+    $('signupNav').classList.toggle('active-glow',open);
+    $('openRegistrationBanner').classList.toggle('hidden',!open);
+    if(open){
+      $('openRegistrationBanner').innerHTML=`<div><span class="kicker">INSCRIÇÕES ABERTAS</span><h2>${open===true && state.openEvents.length===1?safe(state.openEvents[0].name):`${state.openEvents.length} eventos com inscrições abertas`}</h2><p>Selecione seu jogador e sua tribo para participar do próximo EP.</p></div><button type="button" class="button-primary" id="goSignupBanner">Inscrever-se agora →</button>`;
+      $('goSignupBanner').addEventListener('click',()=>showPanel('signup'));
+    }
+    if(redrawSignup || !$('signupPanel').classList.contains('hidden'))renderSignupForm();
+  }catch(err){toast('Não foi possível consultar eventos abertos: '+err.message,true)}
+}
+function openSignupEvent(id){
+  state.selectedSignupEventId=Number(id);
+  showPanel('signup');
+}
+function renderSignupForm(){
+  const events=state.openEvents||[];
+  const requested=Number(new URLSearchParams(window.location.search).get('inscricao'));
+  if(!state.selectedSignupEventId){
+    state.selectedSignupEventId=requested||events[0]?.id||null;
+  }
+  const current=events.find(e=>e.id===state.selectedSignupEventId);
+  $('signupEventPicker').innerHTML=(events.length>1 || (events.length && !events.some(e=>e.id===state.selectedSignupEventId)))?events.map(e=>`<button type="button" data-public-event="${e.id}" class="event-picker-item ${e.id===state.selectedSignupEventId?'selected':''}"><strong>${safe(e.name)}</strong><small>${safe(e.season_name)} · ${safe(e.episode)} · ${fmtDate(e.event_date)}</small></button>`).join(''):'';
+  $('signupEventPicker').querySelectorAll('[data-public-event]').forEach(b=>b.addEventListener('click',()=>{
+    state.selectedSignupEventId=Number(b.dataset.publicEvent);renderSignupForm();
+  }));
+  const enabled=Boolean(current);
+  $('signupForm').classList.toggle('hidden',!enabled);
+  $('signupEventTitle').textContent=current?current.name:'Inscrições encerradas';
+  $('signupEventInfo').textContent=current?`${current.season_name} · ${current.episode} · ${fmtDate(current.event_date)}`:'Este evento não está com inscrições abertas. Consulte a organização ou selecione outro EP disponível.';
+  if(current){$('signupEventName').value=current.name;updateSignupOptions();}
+}
+function updateSignupOptions(){
+  const m=state.public;
+  if(!m)return;
+  const player=$('signupPlayer').value,tribe=$('signupTribe').value;
+  $('signupPlayer').innerHTML=selectOptions(m.players||[],player,'Selecione seu jogador');
+  $('signupTribe').innerHTML=selectOptions(m.tribes||[],tribe,'Selecione a tribo');
+  updateSignupDecks();
+}
+function updateSignupDecks(){
+  const pid=Number($('signupPlayer').value),tid=Number($('signupTribe').value);
+  const sel=$('signupDeck'),old=sel.value;
+  const decks=(state.public?.decks||[]).filter(d=>d.player_id===pid && (!tid || d.tribe_id===tid));
+  sel.innerHTML='<option value="">Sem decklist vinculada</option>'+decks.map(d=>`<option value="${d.id}">${safe(d.name)} (${safe(d.tribe_name)})</option>`).join('');
+  if(decks.some(d=>String(d.id)===old))sel.value=old;
+  updateSignupDeckHint();
+}
+function updateSignupDeckHint(){
+  const d=state.public?.decks?.find(x=>String(x.id)===$('signupDeck').value);
+  $('signupDeckInfo').innerHTML=d?`Deck selecionado: <a class="deck-link" target="_blank" rel="noopener noreferrer" href="${safe(d.url)}">${safe(d.name)} ↗</a>`:'Não tem deck cadastrado? Pode enviar a inscrição sem decklist.';
+}
+async function submitSignup(e){
+  e.preventDefault();
+  const ev=state.openEvents.find(x=>x.id===state.selectedSignupEventId);
+  if(!ev)return toast('Evento fechado. Selecione um evento disponível.',true);
+  const btn=$('signupSubmit');btn.disabled=true;
+  $('signupMessage').textContent='Enviando inscrição...';
+  try{
+    await api('/api/events/register',{method:'POST',body:{event_id:ev.id,player_id:Number($('signupPlayer').value),tribe_id:Number($('signupTribe').value),deck_id:$('signupDeck').value||null}});
+    $('signupMessage').textContent=`✓ Inscrição recebida para ${ev.name}! Procure a organização para confirmar check-in, pagamento e aprovação da decklist.`;
+    toast('Inscrição enviada com sucesso!');
+    $('signupPlayer').value='';$('signupTribe').value='';updateSignupDecks();await loadOpenEvents();
+  }catch(err){ $('signupMessage').textContent='Não foi possível inscrever: '+err.message;toast(err.message,true); }
+  finally{btn.disabled=false}
+}
+function updateEventAdminDecks(){
+  const pid=Number($('eventPlayer').value),tid=Number($('eventTribe').value);
+  const sel=$('eventDeck'),old=sel.value;
+  const decks=(state.public?.decks||[]).filter(d=>d.player_id===pid && (!tid || d.tribe_id===tid));
+  sel.innerHTML='<option value="">Sem decklist</option>'+decks.map(d=>`<option value="${d.id}">${safe(d.name)} (${safe(d.tribe_name)})</option>`).join('');
+  if(decks.some(d=>String(d.id)===old))sel.value=old;
+}
+function showInvite(ev){
+  if(!state.loggedIn)return toast('Acesso administrativo necessário.',true);
+  showPanel('invite');
+  const link=window.location.origin+'/?inscricao='+encodeURIComponent(ev.id);
+  $('inviteEventTitle').textContent=ev.name;
+  $('inviteEventInfo').textContent=`${ev.season_name} · ${ev.episode} · ${fmtDate(ev.event_date)}`;
+  $('inviteEventStatus').textContent=ev.registrations_open?'● Inscrições abertas':'○ Inscrições fechadas — abra as inscrições no painel para permitir envios.';
+  $('inviteLink').value=link;
+  $('inviteQR').src=`/api/admin/events/${ev.id}/qrcode.svg`;
+}
 function bindEvents(){
  $('homeBrand').addEventListener('click',()=>showPanel('public'));$('adminNav').addEventListener('click',()=>showPanel('admin'));$('tableNav').addEventListener('click',()=>showPanel('table'));$('decksNav').addEventListener('click',()=>showPanel('decks'));$('adminBack').addEventListener('click',()=>showPanel('public'));document.querySelectorAll('.backPublic').forEach(b=>b.addEventListener('click',()=>showPanel('public')));
  $('seasonSelect').addEventListener('change',e=>{state.season=e.target.value;loadPublic()});
@@ -491,12 +598,32 @@ function bindEvents(){
    }catch(err){toast(err.message,true)}
  });
  $('eventCancelEdit').addEventListener('click',resetEventForm);
+ $('eventPlayer').addEventListener('change',updateEventAdminDecks);
+ $('eventTribe').addEventListener('change',updateEventAdminDecks);
+ $('eventDeck').addEventListener('change',()=>{
+   const deck=state.public?.decks?.find(d=>String(d.id)===$('eventDeck').value);
+   if(deck)$('eventTribe').value=String(deck.tribe_id);
+ });
+ $('signupPlayer').addEventListener('change',updateSignupDecks);
+ $('signupTribe').addEventListener('change',updateSignupDecks);
+ $('signupDeck').addEventListener('change',()=>{
+   const d=state.public?.decks?.find(d=>String(d.id)===$('signupDeck').value);
+   if(d)$('signupTribe').value=String(d.tribe_id);
+   updateSignupDeckHint();
+ });
+ $('signupForm').addEventListener('submit',submitSignup);
+ $('signupNav').addEventListener('click',()=>showPanel('signup'));
+ $('inviteBack').addEventListener('click',()=>{showPanel('admin');switchAdminTab('events')});
+ $('copyInviteLink').addEventListener('click',async()=>{
+    try{await navigator.clipboard.writeText($('inviteLink').value);toast('Link copiado.')}catch{ $('inviteLink').select();toast('Selecione e copie o link.');}
+ });
+ $('openInviteLink').addEventListener('click',()=>window.open($('inviteLink').value,'_blank','noopener,noreferrer'));
  $('eventRegisterForm').addEventListener('submit',async e=>{
    e.preventDefault();
    if(!state.selectedEventId)return toast('Selecione um evento.',true);
    try{
-     await api(`/api/admin/events/${state.selectedEventId}/registrations`,{method:'POST',body:{player_id:Number($('eventPlayer').value),tribe_id:Number($('eventTribe').value)}});
-     $('eventPlayer').value='';$('eventTribe').value='';
+     await api(`/api/admin/events/${state.selectedEventId}/registrations`,{method:'POST',body:{player_id:Number($('eventPlayer').value),tribe_id:Number($('eventTribe').value),deck_id:$('eventDeck').value||null}});
+     $('eventPlayer').value='';$('eventTribe').value='';updateEventAdminDecks();
      await loadLeagueEvents();toast('Jogador adicionado ao evento.');
    }catch(err){toast(err.message,true)}
  });
@@ -576,4 +703,8 @@ function bindEvents(){
  $('deckForm').addEventListener('submit',submitDeck);
  $('deckCancelBtn').addEventListener('click',resetDeck);
 }
-bindEvents();$('eventDate').value=fmtDate(today());loadPublic(true).then(()=>{resetMatchForm();resetTable();repopulateTableSlots()});
+bindEvents();$('eventDate').value=fmtDate(today());loadPublic(true).then(()=>{
+  resetMatchForm();resetTable();repopulateTableSlots();
+  const requested=Number(new URLSearchParams(window.location.search).get('inscricao'));
+  if(requested>0){state.selectedSignupEventId=requested;showPanel('signup');}
+});

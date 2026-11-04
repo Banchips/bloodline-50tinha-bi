@@ -132,6 +132,7 @@ def init_db():
           name TEXT NOT NULL,
           season_id INTEGER NOT NULL REFERENCES seasons(id),
           episode TEXT NOT NULL COLLATE NOCASE,
+          registrations_open INTEGER NOT NULL DEFAULT 0 CHECK(registrations_open IN (0,1)),
           created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
           updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
           UNIQUE(season_id,episode));
@@ -141,6 +142,7 @@ def init_db():
           event_id INTEGER NOT NULL REFERENCES league_events(id) ON DELETE CASCADE,
           player_id INTEGER NOT NULL REFERENCES players(id),
           tribe_id INTEGER NOT NULL REFERENCES tribes(id),
+          deck_id INTEGER REFERENCES decks(id) ON DELETE SET NULL,
           checkin INTEGER NOT NULL DEFAULT 0 CHECK(checkin IN (0,1)),
           paid INTEGER NOT NULL DEFAULT 0 CHECK(paid IN (0,1)),
           decklist_ok INTEGER NOT NULL DEFAULT 0 CHECK(decklist_ok IN (0,1)),
@@ -148,6 +150,13 @@ def init_db():
           UNIQUE(event_id,player_id));
         CREATE INDEX IF NOT EXISTS idx_event_registrations_event ON event_registrations(event_id);
         ''')
+        # Migração incremental: não recria nem substitui o banco em produção.
+        event_cols = {r['name'] for r in db.execute('PRAGMA table_info(league_events)')}
+        if 'registrations_open' not in event_cols:
+            db.execute('ALTER TABLE league_events ADD COLUMN registrations_open INTEGER NOT NULL DEFAULT 0 CHECK(registrations_open IN (0,1))')
+        reg_cols = {r['name'] for r in db.execute('PRAGMA table_info(event_registrations)')}
+        if 'deck_id' not in reg_cols:
+            db.execute('ALTER TABLE event_registrations ADD COLUMN deck_id INTEGER REFERENCES decks(id) ON DELETE SET NULL')
         # As sessões antigas da v2.1 não estavam associadas a um usuário.
         # Invalidá-las ao migrar impede que cookies antigos deem acesso irrestrito.
         session_cols = {r['name'] for r in db.execute('PRAGMA table_info(sessions)')}
@@ -912,7 +921,25 @@ def validate_event_registration(db, obj):
     tribe_id = int_id(obj.get('tribe_id'), 'Tribo')
     if not exists(db, 'players', player_id) or not exists(db, 'tribes', tribe_id):
         raise UserInputError('Jogador ou tribo inexistente.')
-    return player_id, tribe_id
+    deck_id = obj.get('deck_id')
+    if deck_id in (None, ''):
+        deck_id = None
+    else:
+        deck_id = int_id(deck_id, 'Decklist')
+        found = db.execute('SELECT player_id,tribe_id FROM decks WHERE id=?', (deck_id,)).fetchone()
+        if not found or found['player_id'] != player_id or found['tribe_id'] != tribe_id:
+            raise UserInputError('A decklist não pertence ao jogador e à tribo selecionados.')
+    return player_id, tribe_id, deck_id
+
+
+def public_open_events(db):
+    # Somente dados de divulgação, sem divulgar lista de inscritos ou situação de pagamento.
+    return [dict(r) for r in db.execute('''
+        SELECT e.id,e.name,e.event_date,e.episode,s.name AS season_name,
+               (SELECT COUNT(*) FROM event_registrations r WHERE r.event_id=e.id) AS total_registered
+        FROM league_events e JOIN seasons s ON s.id=e.season_id
+        WHERE e.registrations_open=1
+        ORDER BY e.event_date,e.id''')]
 
 
 def event_status_field(value, field):
@@ -923,16 +950,18 @@ def event_status_field(value, field):
 
 def list_league_events(db):
     events = [dict(row) for row in db.execute('''
-        SELECT e.id,e.name,e.event_date,e.season_id,e.episode,e.created_at,e.updated_at,
+        SELECT e.id,e.name,e.event_date,e.season_id,e.episode,e.registrations_open,e.created_at,e.updated_at,
                s.name AS season_name
         FROM league_events e JOIN seasons s ON s.id=e.season_id
         ORDER BY e.event_date DESC,e.id DESC''')]
     registers = [dict(row) for row in db.execute('''
-        SELECT er.id,er.event_id,er.player_id,er.tribe_id,er.checkin,er.paid,er.decklist_ok,
-               er.registered_at,p.name AS player_name,t.name AS tribe_name
+        SELECT er.id,er.event_id,er.player_id,er.tribe_id,er.deck_id,er.checkin,er.paid,er.decklist_ok,
+               er.registered_at,p.name AS player_name,t.name AS tribe_name,
+               d.name AS deck_name,d.url AS deck_url
         FROM event_registrations er
         JOIN players p ON p.id=er.player_id
         JOIN tribes t ON t.id=er.tribe_id
+        LEFT JOIN decks d ON d.id=er.deck_id
         ORDER BY p.name COLLATE NOCASE''')]
     grouped = {ev['id']: [] for ev in events}
     for row in registers:
@@ -948,7 +977,7 @@ def list_league_events(db):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = 'BloodlineBI/2.2.6'
+    server_version = 'BloodlineBI/2.2.7'
 
     def log_message(self, fmt, *args):
         print('%s - %s' % (self.address_string(), fmt % args))
@@ -1105,6 +1134,38 @@ class Handler(BaseHTTPRequestHandler):
                 f = ROOT / 'static' / file_map[path]
                 typ = 'text/html; charset=utf-8' if f.suffix=='.html' else ('text/css; charset=utf-8' if f.suffix=='.css' else 'application/javascript; charset=utf-8')
                 return self.respond(200,f.read_bytes(),typ)
+            if path == '/api/events/open':
+                with conn_db() as db:
+                    return self.respond(200, {'events':public_open_events(db)})
+            qr_match = re.fullmatch(r'/api/admin/events/(\d+)/qrcode.svg', path)
+            if qr_match:
+                if not self.require_admin():return
+                event_id = int(qr_match.group(1))
+                with conn_db() as db:
+                    if not exists(db, 'league_events', event_id):
+                        return self.respond(404, {'error':'Evento não encontrado.'})
+                host = self.headers.get('Host','')
+                if not re.fullmatch(r'[A-Za-z0-9.\-]+(?::[0-9]{1,5})?', host):
+                    raise UserInputError('Domínio inválido para gerar QR Code.')
+                link = ('https' if COOKIE_SECURE else 'http') + '://' + host + '/?inscricao=' + str(event_id)
+                import qrcode
+                qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, border=4)
+                qr.add_data(link)
+                qr.make(fit=True)
+                matrix = qr.get_matrix()
+                n = len(matrix)
+                # Desenha o código como SVG vetorial. Sem serviços de terceiros.
+                pieces = []
+                for y, line in enumerate(matrix):
+                    x=0
+                    while x < n:
+                        if not line[x]:
+                            x+=1;continue
+                        start=x
+                        while x < n and line[x]: x+=1
+                        pieces.append(f'M{start} {y}h{x-start}v1H{start}z')
+                svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {n} {n}" shape-rendering="crispEdges"><rect width="{n}" height="{n}" fill="white"/><path d="{" ".join(pieces)}" fill="black"/></svg>'
+                return self.respond(200,svg,'image/svg+xml; charset=utf-8')
             if path == '/api/health':
                 return self.respond(200,{'ok':True,'admin_configured':True})
             if path == '/api/session':
@@ -1162,6 +1223,23 @@ class Handler(BaseHTTPRequestHandler):
     def write(self, method):
         try:
             path = urlparse(self.path).path
+            if path == '/api/events/register' and method == 'POST':
+                obj = self.read_json()
+                event_id = int_id(obj.get('event_id'), 'Evento')
+                with DB_LOCK, conn_db() as db:
+                    event = db.execute('SELECT id,registrations_open FROM league_events WHERE id=?',(event_id,)).fetchone()
+                    if not event or not event['registrations_open']:
+                        return self.respond(409, {'error':'As inscrições desse evento estão fechadas.'})
+                    player_id,tribe_id,deck_id=validate_event_registration(db,obj)
+                    if db.execute('SELECT 1 FROM event_registrations WHERE event_id=? AND player_id=?',
+                                  (event_id,player_id)).fetchone():
+                        return self.respond(409,{'error':'Esse jogador já está inscrito. Procure a organização para alterar a inscrição.'})
+                    # O Wi-Fi do torneio pode compartilhar um IP entre dezenas de jogadores.
+                    throttle_public(self.client_address[0],'event_signup',120)
+                    db.execute('''INSERT INTO event_registrations(event_id,player_id,tribe_id,deck_id)
+                                  VALUES(?,?,?,?)''',(event_id,player_id,tribe_id,deck_id))
+                    db.commit()
+                return self.respond(201,{'ok':True,'message':'Inscrição recebida! Aguarde a confirmação da organização.'})
             if path == '/api/admin/import-db' and method == 'POST':
                 return self.import_uploaded_database()
             obj = self.read_json()
@@ -1314,6 +1392,14 @@ class Handler(BaseHTTPRequestHandler):
                 event_match = re.fullmatch(r'/api/admin/events/(\d+)',path)
                 if event_match and method == 'PUT':
                     event_id = int(event_match.group(1))
+                    if set(obj)=={'registrations_open'}:
+                        if not exists(db,'league_events',event_id):
+                            raise UserInputError('Evento não encontrado.')
+                        open_value=event_status_field(obj['registrations_open'],'Inscrições abertas')
+                        db.execute('UPDATE league_events SET registrations_open=?,updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                                   (open_value,event_id))
+                        db.commit()
+                        return self.respond(200,{'ok':True,'registrations_open':bool(open_value)})
                     if not exists(db,'league_events',event_id):
                         raise UserInputError('Evento não encontrado.')
                     values = validate_league_event(db,obj)
@@ -1344,12 +1430,12 @@ class Handler(BaseHTTPRequestHandler):
                     event_id = int(register_route.group(1))
                     if not exists(db,'league_events',event_id):
                         raise UserInputError('Evento não encontrado.')
-                    player_id, tribe_id = validate_event_registration(db,obj)
+                    player_id, tribe_id, deck_id = validate_event_registration(db,obj)
                     if db.execute('SELECT 1 FROM event_registrations WHERE event_id=? AND player_id=?',
                                   (event_id,player_id)).fetchone():
                         raise UserInputError('Esse jogador já está inscrito no evento. Edite a tribo na lista.')
-                    cur = db.execute('INSERT INTO event_registrations(event_id,player_id,tribe_id) VALUES(?,?,?)',
-                                     (event_id,player_id,tribe_id))
+                    cur = db.execute('INSERT INTO event_registrations(event_id,player_id,tribe_id,deck_id) VALUES(?,?,?,?)',
+                                     (event_id,player_id,tribe_id,deck_id))
                     db.commit()
                     return self.respond(201,{'ok':True,'id':cur.lastrowid})
                 reg_match = re.fullmatch(r'/api/admin/events/(\d+)/registrations/(\d+)',path)
@@ -1368,7 +1454,14 @@ class Handler(BaseHTTPRequestHandler):
                         tribe_id = int_id(obj['tribe_id'],'Tribo')
                         if not exists(db,'tribes',tribe_id):
                             raise UserInputError('Tribo inexistente.')
-                        db.execute('UPDATE event_registrations SET tribe_id=? WHERE id=?',(tribe_id,registration_id))
+                        db.execute('''UPDATE event_registrations
+                                      SET tribe_id=?,deck_id=CASE WHEN EXISTS (
+                                        SELECT 1 FROM decks WHERE id=event_registrations.deck_id
+                                           AND tribe_id=?) THEN deck_id ELSE NULL END,
+                                        decklist_ok=CASE WHEN deck_id IS NOT NULL AND NOT EXISTS (
+                                          SELECT 1 FROM decks WHERE id=event_registrations.deck_id AND tribe_id=?
+                                        ) THEN 0 ELSE decklist_ok END
+                                      WHERE id=?''', (tribe_id,tribe_id,tribe_id,registration_id))
                     changes = {}
                     for field in ('checkin','paid','decklist_ok'):
                         if field in obj:

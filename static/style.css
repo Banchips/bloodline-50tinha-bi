@@ -72,3 +72,18 @@
 .mini-buttons .danger{color:#ffadb5;border-color:#80535e}
 .mini-buttons .danger:hover{background:#583543}
 @media(max-width:480px){.event-edit-btn,.event-delete-btn{padding:8px;font-size:11px}}
+
+/* v2.2.7 — inscrições públicas por EP e convites QR */
+.registration-banner{display:flex;justify-content:space-between;align-items:center;gap:20px;border:1px solid #94c455;background:linear-gradient(100deg,#233b2b,#19263a);border-radius:15px;padding:19px 23px;margin:8px 0 24px}
+.registration-banner h2{font-size:20px;margin:6px 0;color:#ecffc9}.registration-banner p{font-size:12px;color:#b7c8c2;margin:0}
+.signup-nav.active-glow{background:#c6ef50;color:#182415;box-shadow:0 0 20px #c6ef5077;border:1px solid #e4fbaa;animation:signup-pulse 2.5s infinite}
+@keyframes signup-pulse{50%{box-shadow:0 0 7px #c6ef5077}}
+.signup-form-panel{max-width:660px;margin:0 auto}.signup-form-panel .stack-form input,.signup-form-panel .stack-form select{width:100%;padding:12px;min-height:46px;border:1px solid #3a4a64;border-radius:9px;background:#0e1727;color:#f1f5fc}
+.signup-form-panel .stack-form label{display:flex;flex-direction:column;gap:8px;color:#c2cee1;font-size:12px}
+.signup-event-picker{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 20px}.event-picker-item{border:1px solid #3c4e64;background:#172239;color:#e2e8f4;display:grid;text-align:left;gap:8px;padding:12px 16px;border-radius:11px;cursor:pointer}.event-picker-item small{font-size:11px;color:#a2b4c9}.event-picker-item.selected{border-color:#c6ef50;background:#20332f}
+.event-qr-btn,.event-roster-qr{border:1px solid #698c4c;background:#2b402e;color:#e0ffb0;font-weight:850;cursor:pointer;padding:9px 11px;border-radius:8px;white-space:nowrap}.event-roster-qr{font-size:11px}
+.event-open-switch{border:1px solid #59657d;border-radius:9px;background:#253048;color:#b5c4d8;cursor:pointer;padding:8px 10px;font-size:11px;font-weight:850}.event-open-switch.on{background:#284634;color:#e0ffb0;border-color:#8fba5a}
+.event-mini-stats{align-items:center}.event-deck-small{display:block;margin-top:6px;font-size:10px}.event-deck-small a{color:#c6ef50;text-decoration:none}
+.invite-card{max-width:980px;margin:0 auto;display:grid;grid-template-columns:1fr auto;gap:25px;align-items:center}.invite-card h2{font-size:27px;margin:9px 0 15px}.invite-card p{line-height:1.65}.invite-qr{background:#fff;border-radius:15px;padding:17px;text-align:center;display:grid;gap:8px;color:#202832;font-weight:700}.invite-qr img{width:280px;max-width:100%;height:auto;aspect-ratio:1}.invite-link{display:flex;gap:10px;margin:24px 0 13px}.invite-link input{width:100%;min-width:0;background:#101b2e;color:#f0f6ff;border:1px solid #3d506a;padding:13px;border-radius:9px;font-size:12px}.invite-link button{white-space:nowrap}
+@media(max-width:900px){.invite-card{grid-template-columns:1fr}.invite-qr{justify-self:start}.event-list-item{flex-wrap:wrap}.event-list-select{flex-basis:100%}.event-qr-btn,.event-edit-btn,.event-delete-btn{flex:1}.event-qr-btn{border-radius:0}}
+@media(max-width:620px){.registration-banner{flex-direction:column;align-items:stretch}.invite-link{flex-direction:column}.invite-qr{justify-self:stretch}.invite-qr img{margin:auto}.top-right .signup-nav{flex:1 1 100%}.top-right{flex-wrap:wrap}}

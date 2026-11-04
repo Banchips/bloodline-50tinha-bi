@@ -11,7 +11,7 @@
 <body>
   <header class="topbar">
     <div class="brand" id="homeBrand"><div class="brand-symbol">B<span>50</span></div><div><strong>BLOODLINE</strong><small>50TINHA · INTELIGÊNCIA DA LIGA</small></div></div>
-    <div class="top-right"><span class="live"><span class="live-dot"></span> Ranking oficial da plataforma</span><button class="admin-access" id="tableNav">⚔ Enviar mesa</button><button class="admin-access" id="decksNav">▤ Decklists</button><button class="admin-access" id="adminNav"><span aria-hidden="true">⚙</span> Administração</button></div>
+    <div class="top-right"><span class="live"><span class="live-dot"></span> Ranking oficial da plataforma</span><button class="admin-access signup-nav hidden" id="signupNav">✦ Inscrições abertas</button><button class="admin-access" id="tableNav">⚔ Enviar mesa</button><button class="admin-access" id="decksNav">▤ Decklists</button><button class="admin-access" id="adminNav"><span aria-hidden="true">⚙</span> Administração</button></div>
   </header>
   <main class="shell">
     <section id="publicPanel">
@@ -19,6 +19,7 @@
         <div><div class="eyebrow">PAINEL DE DESEMPENHO · COMMANDER</div><h1>A arena tem <em>números.</em></h1><p>Classificação, partidas e tribos da Bloodline 50tinha. O placar considera apenas os resultados elegíveis da temporada.</p></div>
         <div class="hero-filters"><label for="seasonSelect">TEMPORADA</label><select id="seasonSelect" aria-label="Selecionar temporada"></select></div>
       </div>
+      <div id="openRegistrationBanner" class="registration-banner hidden" aria-live="polite"></div>
       <div class="stats-grid" id="statsGrid"></div>
       <div class="sections-grid">
         <section class="panel ranking-panel">
@@ -31,6 +32,27 @@
       <section class="panel trend-panel"><div class="panel-heading"><div><span class="kicker">PROGRESSÃO</span><h2>Evolução do Top 5 · Jogador/Tribo</h2><p>As cinco combinações mais bem colocadas, com pontos próprios acumulados por evento.</p></div></div><div id="trendChart" class="trend-chart"></div><div id="trendLegend" class="trend-legend"></div></section>
       <section class="panel matches-panel"><div class="panel-heading"><div><span class="kicker">HISTÓRICO</span><h2>Últimas partidas</h2><p>Resultados de tribos bloqueadas permanecem visíveis, com zero ponto válido.</p></div><input id="matchesSearch" type="search" placeholder="Filtrar partidas..." aria-label="Buscar partidas"></div><div class="table-scroller"><table class="matches-table"><thead><tr><th>DATA</th><th>ETAPA / RODADA</th><th>JOGADOR</th><th>TRIBO</th><th>RESULTADO</th><th>PONTOS VÁLIDOS</th></tr></thead><tbody id="matchRows"></tbody></table></div></section>
       <div class="rule-note" id="ruleNote"></div>
+    </section>
+    <section id="signupPanel" class="hidden">
+      <div class="admin-hero"><div><span class="kicker">LIGA BLOODLINE · INSCRIÇÕES</span><h1>Entre na <em>arena.</em></h1><p>Escolha seu jogador, a tribo e, se quiser, uma decklist já cadastrada.</p></div><button type="button" class="button-outline backPublic">← Voltar ao ranking</button></div>
+      <div id="signupEventPicker" class="signup-event-picker"></div>
+      <section class="panel padded signup-form-panel">
+        <div class="section-intro"><span class="kicker">INSCRIÇÃO NO EVENTO</span><h2 id="signupEventTitle">Selecione um evento</h2><p id="signupEventInfo" class="muted-note"></p></div>
+        <form id="signupForm" class="stack-form">
+          <label>Nome do evento<input id="signupEventName" readonly aria-label="Nome do evento"></label>
+          <label>Player<select id="signupPlayer" required></select></label>
+          <label>Tribo<select id="signupTribe" required></select></label>
+          <label>Decklist (opcional)<select id="signupDeck"><option value="">Sem decklist</option></select></label>
+          <p id="signupDeckInfo" class="muted-note"></p>
+          <button type="submit" id="signupSubmit" class="button-primary">Confirmar inscrição</button>
+        </form>
+        <div id="signupMessage" role="status" aria-live="polite" class="import-summary"></div>
+        <div class="helper-panel">A inscrição não confirma presença, pagamento ou aprovação da decklist. Esses controles ficam com a organização.</div>
+      </section>
+    </section>
+    <section id="invitePanel" class="hidden">
+      <div class="admin-hero"><div><span class="kicker">DIVULGAÇÃO DO EVENTO</span><h1>Link e <em>QR Code.</em></h1><p>Compartilhe o acesso para os jogadores se inscreverem.</p></div><button type="button" class="button-outline" id="inviteBack">← Voltar aos eventos</button></div>
+      <section class="panel padded invite-card"><div><span class="kicker">CONVITE DO EP</span><h2 id="inviteEventTitle"></h2><p id="inviteEventInfo" class="muted-note"></p><p id="inviteEventStatus"></p><div class="invite-link"><input id="inviteLink" aria-label="Link de inscrição" readonly><button id="copyInviteLink" class="button-primary" type="button">Copiar link</button></div><button class="button-outline" type="button" id="openInviteLink">Abrir inscrição</button></div><div class="invite-qr"><img id="inviteQR" alt="QR Code para a inscrição neste evento" width="280" height="280"><small>Aponte a câmera do celular</small></div></section>
     </section>
     <section id="tablePanel" class="hidden">
       <div class="admin-hero"><div><span class="kicker">REGISTRO DE TORNEIO</span><h1>Resultado da <em>mesa.</em></h1><p>Informe o EP, a rodada e quem participou. A mesa comporta 3 ou 4 jogadores.</p></div><button class="button-outline backPublic">← Voltar ao ranking</button></div>
@@ -64,7 +86,7 @@
             <section class="panel padded">
               <span class="kicker">ORGANIZAÇÃO DA LIGA</span>
               <h2 id="eventFormTitle">Criar novo evento</h2>
-              <p>Cadastre a data, o nome, a temporada e o EP. A lista de jogadores será gerenciada separadamente para cada evento.</p>
+              <p>Cadastre a data, o nome, a temporada e o EP. Depois abra as inscrições e compartilhe o QR Code com os participantes.</p>
               <form id="eventForm" class="stack-form">
                 <label>Dia do evento<input id="eventDate" type="text" inputmode="numeric" maxlength="10" placeholder="DD/MM/AAAA" pattern="(0[1-9]|[12][0-9]|3[01])/(0[1-9]|1[0-2])/[0-9]{4}" title="Digite a data no formato DD/MM/AAAA" required></label>
                 <label>Nome do evento<input id="eventName" maxlength="120" placeholder="Ex.: Bloodline 50tinha — Etapa 1" required></label>
@@ -84,7 +106,7 @@
             <div id="eventRosterContent" class="hidden">
               <form id="eventRegisterForm" class="form-grid event-register-form">
                 <label>Nome do jogador<select id="eventPlayer" required></select></label>
-                <label>Tribo<select id="eventTribe" required></select></label>
+                <label>Tribo<select id="eventTribe" required></select></label><label>Decklist (opcional)<select id="eventDeck"><option value="">Sem decklist</option></select></label>
                 <div class="form-actions"><button class="button-primary" type="submit">Adicionar jogador</button></div>
               </form>
               <div class="table-scroller"><table class="event-roster-table"><thead><tr><th>JOGADOR</th><th>TRIBO</th><th>CHECK-IN</th><th>PAGAMENTO</th><th>DECKLIST</th><th>AÇÕES</th></tr></thead><tbody id="eventRosterRows"></tbody></table></div>
