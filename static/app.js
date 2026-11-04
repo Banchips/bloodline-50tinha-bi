@@ -2,7 +2,16 @@
 const $ = (id) => document.getElementById(id);
 const safe = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const intFmt = (n) => Number(n || 0).toLocaleString('pt-BR');
-const fmtDate = (d) => d ? d.split('-').reverse().join('/') : '—';
+const fmtDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d||'')) ? d.split('-').reverse().join('/') : (d||'—');
+const fmtDateTime = (d) => d ? String(d).replace(/^(\d{4})-(\d{2})-(\d{2})[ T](.*)$/, '$3/$2/$1 $4') : '—';
+function isoFromBrazilianDate(value){
+ const m=/^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(value||'').trim());
+ if(!m)throw new Error('Informe a data no formato DD/MM/AAAA.');
+ const [,dd,mm,yyyy]=m;const d=new Date(Date.UTC(Number(yyyy),Number(mm)-1,Number(dd)));
+ if(d.getUTCFullYear()!==Number(yyyy)||d.getUTCMonth()+1!==Number(mm)||d.getUTCDate()!==Number(dd))
+   throw new Error('Data inválida. Confira o dia e o mês.');
+ return `${yyyy}-${mm}-${dd}`;
+}
 const resultLabels = {V:'Vitória · 3 pts',E:'Empate · 1 pt',D:'Derrota · 0 pts'};
 const colors = ['#c6ef50','#9e8eff','#69d7e3','#f2b47c','#f18ba8'];
 const state = {public:null, admin:null, season:'all', adminMode:false, loggedIn:false, editing:null, editingDeck:null, tables:[], canManageAdmins:false, admins:[]};
@@ -51,8 +60,8 @@ function renderRanking(){
   const needle=$('rankingSearch').value.trim().toLocaleLowerCase();
   // Cada linha corresponde a UMA combinação jogador + tribo.
   const ranks=d.ranking.filter(p=>(p.name+' '+p.tribe_name).toLocaleLowerCase().includes(needle));
-  $('rankingRows').innerHTML=ranks.length?ranks.map(p=>`<tr data-player="${p.player_id}" data-tribe="${p.tribe_id}" tabindex="0" title="Ver perfil de ${safe(p.name)} e resultados de ${safe(p.tribe_name)}"><td><span class="pos ${p.position===1?'first':p.position===2?'second':p.position===3?'third':''}">${p.position}</span></td><td class="player">${safe(p.name)}</td><td class="num">${intFmt(p.points)}</td><td>${intFmt(p.matches)}</td><td>${p.wins} / ${p.draws} / ${p.losses}</td><td><div class="tribe-tags"><span class="tag ${p.excluded_matches===p.matches?'off':''}" title="${p.matches} partida(s), ${p.points} ponto(s) válido(s)${p.excluded_matches?`, ${p.excluded_matches} sem pontuação`:''}">${safe(p.tribe_name)}</span></div></td><td class="action-chevron">›</td></tr>`).join(''):'<tr><td colspan="7" class="empty">Nenhuma combinação jogador/tribo encontrada. Cadastre os resultados na administração.</td></tr>';
-  $('rankingFoot').textContent=`${ranks.length} inscrição(ões) jogador/tribo · ${d.summary.players} jogador(es) cadastrado(s) · Cada tribo tem pontuação e partidas próprias`;
+  $('rankingRows').innerHTML=ranks.length?ranks.map(p=>`<tr data-player="${p.player_id}" data-tribe="${p.tribe_id}" tabindex="0" title="Ver perfil de ${safe(p.name)} e resultados de ${safe(p.tribe_name)}"><td><span class="pos ${p.position===1?'first':p.position===2?'second':p.position===3?'third':''}">${p.position}</span></td><td class="player">${safe(p.name)}</td><td class="num">${intFmt(p.points)}</td><td>${intFmt(p.matches)}</td><td>${p.wins} / ${p.draws} / ${p.losses}</td><td class="num" title="${p.opw_pct===null?`OPW indisponível: ${p.opw_rounds} de ${p.opw_expected_rounds} partidas com mesa identificada`:`OPW calculado com ${p.opw_opponents} adversário(s) em ${p.opw_rounds} partida(s)`}">${p.opw_pct===null?'—':Number(p.opw_pct).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%'}</td><td><div class="tribe-tags"><span class="tag ${p.excluded_matches===p.matches?'off':''}" title="${p.matches} partida(s), ${p.points} ponto(s) válido(s)${p.excluded_matches?`, ${p.excluded_matches} sem pontuação`:''}">${safe(p.tribe_name)}</span></div></td><td class="action-chevron">›</td></tr>`).join(''):'<tr><td colspan="8" class="empty">Nenhuma combinação jogador/tribo encontrada. Cadastre os resultados na administração.</td></tr>';
+  $('rankingFoot').textContent=`${ranks.length} entradas jogador/tribo · Desempate: pontos → OPW% → vitórias → partidas válidas. OPW: média dos adversários com piso de 33% (somente mesas completas). “—” indica histórico sem pareamentos suficientes.`;
   $('rankingRows').querySelectorAll('tr[data-player]').forEach(tr=>{
     const open=()=>showPlayer(Number(tr.dataset.player),Number(tr.dataset.tribe));
     tr.addEventListener('click',open);
@@ -65,7 +74,7 @@ function showPlayer(id,tribeId=null){
   const decks=(p.decks||[]).map(d=>`<div class="detail-tribe"><span><strong>${safe(d.name)}</strong><small> · ${safe(d.tribe_name)}</small><br><small>${d.matches} partida(s) · ${d.wins} vitória(s) · ${d.points} ponto(s) válido(s)</small></span><a href="${safe(d.url)}" target="_blank" rel="noopener noreferrer" class="deck-link">Abrir decklist ↗</a></div>`).join('');
   const tribes=p.tribes.map(t=>{
     const entry=state.public.ranking.find(r=>r.player_id===id && r.tribe_id===t.id);
-    return `<div class="detail-tribe"><span><strong>${safe(t.name)}</strong>${entry?` <small>· #${entry.position} no ranking</small>`:''} ${t.excluded_matches?'<small class="excluded">(há partidas sem pontuar)</small>':''}</span><span>${t.matches} partidas · ${t.wins} V / ${t.draws} E / ${t.losses} D · <strong>${t.points} pts</strong></span></div>`;
+    return `<div class="detail-tribe"><span><strong>${safe(t.name)}</strong>${entry?` <small>· #${entry.position} no ranking</small>`:''} ${t.excluded_matches?'<small class="excluded">(há partidas sem pontuar)</small>':''}</span><span>${t.matches} partidas · ${t.wins} V / ${t.draws} E / ${t.losses} D · <strong>${t.points} pts</strong>${entry?' · OPW '+(entry.opw_pct===null?'—':Number(entry.opw_pct).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%'):''}</span></div>`;
   }).join('');
   $('detailContents').innerHTML=`<span class="kicker">${selected?`#${selected.position} NO RANKING · ${safe(selected.tribe_name)}`:'PERFIL DO JOGADOR'}</span><h2 id="detailTitle">${safe(p.name)}</h2><p class="muted-note">${safe(p.seasons.join(' · ')||'Sem partidas nesta seleção')}</p><div class="detail-stats"><div><strong>${p.points}</strong><small>PONTOS NO HISTÓRICO</small></div><div><strong>${p.matches}</strong><small>PARTIDAS TOTAIS</small></div><div><strong>${p.win_rate}%</strong><small>VITÓRIAS TOTAIS</small></div></div><p>${p.wins} vitórias · ${p.draws} empates · ${p.losses} derrotas, somando todas as tribos. <strong>O ranking não soma tribos diferentes.</strong></p><h3>Decks e decklists</h3><div class="detail-tribes">${decks||'<p class="muted-note">Nenhum deck enviado para este jogador.</p>'}</div><h3>Desempenho por tribo</h3><div class="detail-tribes">${tribes||'<p class="muted-note">Ainda sem partidas.</p>'}</div><p class="muted-note">Partidas antigas sem deck indicado são contabilizadas na tribo, mas não em um deck específico.</p>`;
   $('detailOverlay').classList.remove('hidden');
@@ -82,7 +91,7 @@ function renderTribes(){
 }
 function renderMatches(){
   const needle=$('matchesSearch').value.trim().toLocaleLowerCase();
-  const records=(state.public?.recent_matches||[]).filter(m=>(`${m.player_name} ${m.tribe_name} ${m.event_date} ${m.episode} ${m.season_name}`).toLocaleLowerCase().includes(needle));
+  const records=(state.public?.recent_matches||[]).filter(m=>(`${m.player_name} ${m.tribe_name} ${m.event_date} ${fmtDate(m.event_date)} ${m.episode} ${m.season_name}`).toLocaleLowerCase().includes(needle));
   $('matchRows').innerHTML=records.length?records.slice(0,80).map(m=>`<tr><td>${fmtDate(m.event_date)}</td><td>${safe(m.episode||'Etapa')} / R${m.round_no}${state.season==='all'?`<br><small>${safe(m.season_name)}</small>`:''}</td><td><strong>${safe(m.player_name)}</strong></td><td>${safe(m.tribe_name)}${m.excluded?' <span class="zero-note">(sem pontos)</span>':''}</td><td><span class="result-pill result-${m.result}">${resultLabels[m.result]}</span></td><td class="${m.excluded?'excluded':''}"><strong>${m.points}</strong>${m.excluded?'<small> · bloqueada</small>':''}</td></tr>`).join(''):'<tr><td class="empty" colspan="6">Nenhuma partida encontrada.</td></tr>';
 }
 function renderTrend(){
@@ -134,7 +143,7 @@ async function loadAdminUsers(){
     state.admins=data.users;
     $('adminUsersList').innerHTML=data.users.map(u=>{
       const status=u.active?'Ativo':'Desativado';
-      const when=u.last_login_at?` · Último acesso: ${safe(u.last_login_at)}`:' · Ainda não acessou';
+      const when=u.last_login_at?` · Último acesso: ${safe(fmtDateTime(u.last_login_at))}`:' · Ainda não acessou';
       return `<div class="manager-item admin-user-row"><span><b>${safe(u.username)}</b> <span class="account-role">${u.role==='owner'?'Principal':'Administrador'}</span><small>${status}${when}</small></span>${u.role==='owner'?'':`<div class="mini-buttons"><button type="button" data-user-toggle="${u.id}">${u.active?'Desativar':'Reativar'}</button></div>`}</div>`;
     }).join('')||'<p class="muted-note">Nenhum administrador encontrado.</p>';
     $('resetAdminUser').innerHTML='<option value="">Selecione um administrador...</option>'+data.users.filter(u=>u.role!=='owner').map(u=>`<option value="${u.id}">${safe(u.username)}</option>`).join('');
@@ -188,17 +197,17 @@ function renderExclusions(){
 }
 function renderAdminMatches(){
  const needle=$('adminMatchSearch').value.trim().toLowerCase();
- const arr=(state.admin?.all_matches||[]).filter(m=>`${m.player_name} ${m.tribe_name} ${m.season_name} ${m.episode} ${m.event_date}`.toLowerCase().includes(needle));
+ const arr=(state.admin?.all_matches||[]).filter(m=>`${m.player_name} ${m.tribe_name} ${m.season_name} ${m.episode} ${m.event_date} ${fmtDate(m.event_date)}`.toLowerCase().includes(needle));
  $('adminMatchList').innerHTML=arr.length?arr.slice(0,300).map(m=>`<div class="admin-match-item"><div><strong>${safe(m.player_name)} · ${safe(m.tribe_name)} <span class="${m.excluded?'excluded':''}">(${m.points} pt)</span></strong><small>${fmtDate(m.event_date)} · ${safe(m.season_name)} · ${safe(m.episode||'Etapa')} · R${m.round_no} · ${safe(resultLabels[m.result])}</small></div><div class="mini-buttons">${m.table_id?'<span class="zero-note">Mesa #'+m.table_id+'</span>':`<button data-edit="${m.id}">Editar</button><button class="danger" data-delete="${m.id}">Excluir</button>`}</div></div>`).join(''):'<p class="muted-note">Nenhuma partida cadastrada.</p>';
  $('adminMatchList').querySelectorAll('button[data-edit]').forEach(b=>b.addEventListener('click',()=>editMatch(Number(b.dataset.edit))));
  $('adminMatchList').querySelectorAll('button[data-delete]').forEach(b=>b.addEventListener('click',()=>deleteMatch(Number(b.dataset.delete))));
 }
 function editMatch(id){const m=state.admin.all_matches.find(x=>x.id===id);if(!m)return;state.editing=id;
- const fields={mSeason:m.season_id,mDate:m.event_date,mEpisode:m.episode,mRound:m.round_no,mPlayer:m.player_id,mTribe:m.tribe_id,mResult:m.result,mDeck:m.deck_id??''};
+ const fields={mSeason:m.season_id,mDate:fmtDate(m.event_date),mEpisode:m.episode,mRound:m.round_no,mPlayer:m.player_id,mTribe:m.tribe_id,mResult:m.result,mDeck:m.deck_id??''};
  for(const [key,value] of Object.entries(fields)){if(key==='mDeck')continue;$(key).value=value;} updateAdminDeckOptions();$('mDeck').value=m.deck_id??'';
  $('matchFormTitle').textContent='Editar partida #'+id;$('saveMatch').textContent='Salvar alterações';$('cancelEdit').classList.remove('hidden');$('matchForm').scrollIntoView({behavior:'smooth',block:'center'});
 }
-function resetMatchForm(){state.editing=null;$('matchForm').reset();$('matchFormTitle').textContent='Adicionar partida';$('saveMatch').textContent='Salvar resultado';$('cancelEdit').classList.add('hidden');$('mSeason').value=state.season!=='all'?state.season:String(state.admin?.master.seasons.at(-1)?.id||'');{const now=new Date(); $('mDate').value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`}}
+function resetMatchForm(){state.editing=null;$('matchForm').reset();$('matchFormTitle').textContent='Adicionar partida';$('saveMatch').textContent='Salvar resultado';$('cancelEdit').classList.add('hidden');$('mSeason').value=state.season!=='all'?state.season:String(state.admin?.master.seasons.at(-1)?.id||'');{const now=new Date(); $('mDate').value=fmtDate(today())}}
 async function deleteMatch(id){if(!confirm(`Excluir a partida #${id}? Essa ação não pode ser desfeita.`))return;try{await api(`/api/matches/${id}`,{method:'DELETE',body:{}});toast('Partida excluída.');if(state.editing===id)resetMatchForm();await reloadAll()}catch(err){toast(err.message,true)}}
 async function reloadAll(){await loadPublic(false);await loadAdmin()}
 function switchAdminTab(tab){document.querySelectorAll('.admin-tab').forEach(e=>e.classList.toggle('active',e.dataset.adminTab===tab));document.querySelectorAll('.admin-pane').forEach(e=>e.classList.toggle('hidden',e.id!=='pane-'+tab))}
@@ -252,7 +261,7 @@ function updateSlotDeck(pos){
   if(!decks.some(d=>String(d.id)===vdeck))deck.value='';
 }
 function resetTable(){
-  $('tableForm').reset();$('tDate').value=today();
+  $('tableForm').reset();$('tDate').value=fmtDate(today());
   $('tSeason').value=state.season!=='all'?state.season:String(state.public?.seasons?.at(-1)?.id||'');
   $('tTable').value='1';
   createTableSlots();repopulateTableSlots();
@@ -277,9 +286,9 @@ async function submitTable(e){
       deck_id:document.querySelector(`.slot-deck[data-pos="${i}"]`).value,
       result:document.querySelector(`.slot-result[data-pos="${i}"]`).value});
   }
-  const body={season_id:$('tSeason').value,event_date:$('tDate').value,episode:$('tEpisode').value.trim(),
-    round_no:$('tRound').value,table_no:$('tTable').value,submitted_by:$('tSubmitter').value,entries};
   try{
+    const body={season_id:$('tSeason').value,event_date:isoFromBrazilianDate($('tDate').value),episode:$('tEpisode').value.trim(),
+      round_no:$('tRound').value,table_no:$('tTable').value,submitted_by:$('tSubmitter').value,entries};
     const r=await api('/api/tables',{method:'POST',body});
     toast(r.status==='approved'?'Mesa aprovada e registrada!':'Mesa #'+r.id+' enviada para aprovação.');
     resetTable();await loadPublic();if(state.loggedIn)await loadAdmin();await loadTables();
@@ -397,9 +406,9 @@ function bindEvents(){
  for(const [form,endpoint,input] of [['seasonForm','seasons','newSeason'],['playerForm','players','newPlayer'],['tribeForm','tribes','newTribe']]){
    $(form).addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/'+endpoint,{method:'POST',body:{name:$(input).value.trim()}});$(form).reset();toast('Cadastro criado.');await reloadAll()}catch(err){toast(err.message,true)}});
  }
- $('matchForm').addEventListener('submit',async e=>{e.preventDefault();const body={season_id:$('mSeason').value,event_date:$('mDate').value,episode:$('mEpisode').value.trim(),round_no:$('mRound').value,player_id:$('mPlayer').value,tribe_id:$('mTribe').value,result:$('mResult').value,deck_id:$('mDeck').value};
+ $('matchForm').addEventListener('submit',async e=>{e.preventDefault();try{const body={season_id:$('mSeason').value,event_date:isoFromBrazilianDate($('mDate').value),episode:$('mEpisode').value.trim(),round_no:$('mRound').value,player_id:$('mPlayer').value,tribe_id:$('mTribe').value,result:$('mResult').value,deck_id:$('mDeck').value};
    const path=state.editing?`/api/matches/${state.editing}`:'/api/matches';
-   try{await api(path,{method:state.editing?'PUT':'POST',body});toast(state.editing?'Partida atualizada.':'Partida cadastrada.');resetMatchForm();await reloadAll()}catch(err){toast(err.message,true)}
+   await api(path,{method:state.editing?'PUT':'POST',body});toast(state.editing?'Partida atualizada.':'Partida cadastrada.');resetMatchForm();await reloadAll()}catch(err){toast(err.message,true)}
  });
  $('cancelEdit').addEventListener('click',resetMatchForm);
  $('restoreDbForm').addEventListener('submit',async e=>{

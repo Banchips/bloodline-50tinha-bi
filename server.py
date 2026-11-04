@@ -424,6 +424,48 @@ def public_view(db, season_arg='all', admin=False):
         t['points'] += rec['points']
         t['excluded_matches'] += rec['excluded']
         t['players'].add(rec['player_name'])
+    # OPW%: média da porcentagem de vitórias dos adversários efetivamente
+    # encontrados nas mesas aprovadas. Um confronto multiplayer soma cada
+    # adversário uma vez (2 em mesas de 3, 3 em mesas de 4). Estatísticas dos
+    # adversários são calculadas por temporada; a tribo adversária não precisa
+    # ser a mesma durante todo o campeonato. Aplicamos o piso de 33% usado no
+    # desempate por adversários do Magic. Jogos de tribos bloqueadas não entram
+    # no desempenho pontuante nem no OPW da própria entrada bloqueada.
+    # Não é possível reconstruir adversários a partir de CSVs sem table_id.
+    opponent_stats = {}
+    seats_by_table = {}
+    for rec in records:
+        if not rec['excluded']:
+            key = (rec['season_id'], rec['player_id'])
+            stats = opponent_stats.setdefault(key, {'points': 0, 'matches': 0})
+            stats['points'] += rec['points']
+            stats['matches'] += 1
+        if rec.get('table_id') is not None:
+            seats_by_table.setdefault(rec['table_id'], []).append(rec)
+
+    opw_values = {}
+    opw_known_rounds = {}
+    for rec in records:
+        if rec['excluded'] or rec.get('table_id') is None:
+            continue
+        seats = seats_by_table.get(rec['table_id'], ())
+        # Uma mesa deve conter somente 3 ou 4 participantes distintos, todos
+        # do mesmo torneio/rodada. Dados inconsistentes não viram percentual.
+        participant_ids = {entry['player_id'] for entry in seats}
+        if len(seats) not in (3, 4) or len(participant_ids) != len(seats):
+            continue
+        if any((other['season_id'], other['event_date'], other['episode'], other['round_no']) !=
+               (rec['season_id'], rec['event_date'], rec['episode'], rec['round_no']) for other in seats):
+            continue
+        key = (rec['player_id'], rec['tribe_id'])
+        for other in seats:
+            if other['player_id'] == rec['player_id']:
+                continue
+            stats = opponent_stats.get((rec['season_id'], other['player_id']))
+            ratio = stats['points'] / (3 * stats['matches']) if stats and stats['matches'] else 0
+            opw_values.setdefault(key, []).append(max(0.33, ratio))
+        opw_known_rounds[key] = opw_known_rounds.get(key, 0) + 1
+
     # Decks sem partidas também aparecem no perfil. Resultados antigos/CSV sem
     # deck vinculado continuam contando para jogador/tribo, não para um deck específico.
     all_decks = [dict(d) for d in db.execute('''SELECT d.id,d.player_id,d.tribe_id,d.name,d.url,
@@ -453,6 +495,13 @@ def public_view(db, season_arg='all', admin=False):
     ranking = []
     for profile in player_profiles:
         for tribo in profile['tribes'].values():
+            entry_key = (profile['id'], tribo['id'])
+            known = opw_known_rounds.get(entry_key, 0)
+            opponents = opw_values.get(entry_key, ())
+            # Somente se TODAS as partidas pontuantes tiverem adversários
+            # identificados calculamos OPW; cobertura parcial ficaria enganosa.
+            complete = (known > 0 and known == tribo['eligible_matches'] and bool(opponents))
+            opw_value = sum(opponents) / len(opponents) if complete else None
             ranking.append({
                 'id': profile['id'], 'player_id': profile['id'], 'tribe_id': tribo['id'],
                 'rank_key': f"{profile['id']}:{tribo['id']}",
@@ -465,12 +514,20 @@ def public_view(db, season_arg='all', admin=False):
                 'eligible_wins': tribo['eligible_wins'],
                 'eligible_matches': tribo['eligible_matches'],
                 'win_rate': round(tribo['wins'] / tribo['matches'] * 100, 1) if tribo['matches'] else 0,
+                'opw_pct': round(100 * opw_value, 2) if opw_value is not None else None,
+                'opw_value': opw_value,
+                'opw_rounds': known, 'opw_opponents': len(opponents),
+                'opw_expected_rounds': tribo['eligible_matches'],
             })
         profile['tribes'] = sorted(profile['tribes'].values(), key=lambda t: (-t['matches'], t['name'].lower()))
         profile['seasons'] = sorted(profile['seasons'])
         profile['decks'] = sorted(profile['decks'].values(), key=lambda d:(-d['points'],d['name'].casefold()))
         profile['win_rate'] = round(profile['wins'] / profile['matches'] * 100, 1) if profile['matches'] else 0
-    ranking.sort(key=lambda r: (-r['points'], -r['eligible_wins'], -r['eligible_matches'],
+    # Desempate principal: OPW%. Partidas antigas sem mesa identificada ficam
+    # com OPW indisponível; em igualdade de pontos, vêm após OPW verificável.
+    # Próximos critérios: vitórias, partidas válidas e ordem alfabética.
+    ranking.sort(key=lambda r: (-r['points'], -(r['opw_value'] if r['opw_value'] is not None else -1),
+                                -r['eligible_wins'], -r['eligible_matches'],
                                 r['name'].casefold(), r['tribe_name'].casefold()))
     for index, r in enumerate(ranking, start=1):
         r['position'] = index
@@ -642,7 +699,8 @@ def export_csv(db, season_arg):
     writer = csv.writer(buf, delimiter=';')
     writer.writerow(['TEMPORADA','DATA','EPISODIO','RODADA','JOGADOR','TRIBO','RESULTADO','PONTOS','PONTOS_VALIDOS','TRIBO_NAO_PONTUA'])
     for m in reversed(view['all_matches']):
-        writer.writerow([m['season_name'], m['event_date'], m['episode'], m['round_no'],m['player_name'],
+        brazilian_date = datetime.strptime(m['event_date'], '%Y-%m-%d').strftime('%d/%m/%Y')
+        writer.writerow([m['season_name'], brazilian_date, m['episode'], m['round_no'],m['player_name'],
             m['tribe_name'], m['result'], m['raw_points'], m['points'], 'SIM' if m['excluded'] else 'NAO'])
     return '\ufeff' + buf.getvalue()
 
