@@ -36,3 +36,32 @@
 .admin-user-row span{display:block}.admin-user-row small{display:block;margin-top:6px;font-size:10px;color:#93a9c6;line-height:1.6}
 .account-role{display:inline!important;font-size:10px;color:var(--lime);font-weight:800;margin-left:6px}
 @media(max-width:690px){.login-area .inline-form input,.login-area .inline-form button{width:100%}.admin-user-row{align-items:flex-start;flex-direction:column}}
+
+/* v2.2.5 — cadastro de eventos e conferência de jogadores */
+.event-layout{grid-template-columns:minmax(260px, 0.9fr) minmax(340px,1.1fr)}
+.event-list{display:grid;gap:9px;margin-top:16px;max-height:440px;overflow-y:auto}
+.event-list-item{display:flex;align-items:stretch;background:#172239;border:1px solid #384b65;border-radius:11px;overflow:hidden}
+.event-list-item.selected{border-color:#c6ef50;background:#1d2d39}
+.event-list-select{flex:1;text-align:left;border:0;background:transparent;color:#e7f0ff;padding:12px 13px;display:grid;gap:5px;cursor:pointer;min-width:0}
+.event-list-select strong{font-size:13px;overflow-wrap:anywhere}
+.event-day{font-size:10px;color:#c6ef50;font-weight:850;letter-spacing:1px}
+.event-list-select small{font-size:11px;color:#99abc6}
+.event-edit-btn{border:0;border-left:1px solid #384b65;background:#202e46;color:#cbd9f0;padding:10px;cursor:pointer}
+.event-edit-btn:hover{background:#2d4057}
+.event-roster-panel{margin-top:18px}.event-heading{padding:0 0 16px;display:flex;align-items:start;gap:15px}
+.event-heading p{margin-top:5px}.event-mini-stats{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+.event-mini-stats span{font-size:11px;padding:8px 10px;border-radius:9px;background:#243349;color:#d8e5f7;white-space:nowrap}
+.event-register-form{grid-template-columns:1fr 1fr auto;align-items:end;margin:15px 0 24px}
+.event-register-form .form-actions{margin:0;align-self:end}
+.event-roster-table{width:100%;border-collapse:collapse;min-width:670px}
+.event-roster-table th,.event-roster-table td{padding:12px 10px;text-align:left;border-bottom:1px solid #314057;font-size:12px}
+.event-roster-table th{color:#9eb0cb;font-size:10px;letter-spacing:.8px}
+.event-roster-table select{width:100%;min-width:110px;max-width:210px;font-size:12px;padding:8px 6px}
+.event-toggle{border:1px solid #4d586c;background:#263044;color:#b6c1d4;border-radius:11px;min-width:76px;min-height:52px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;transition:.12s}
+.event-toggle span{font-size:18px;line-height:1.1;font-weight:900}.event-toggle small{font-size:10px;font-weight:750}
+.event-toggle.on{background:#263d2e;color:#d2ff91;border-color:#91c25d;box-shadow:inset 0 0 0 1px #537f3d}
+.event-toggle:hover,.event-toggle:focus-visible{outline:2px solid #b9dd75;outline-offset:1px}
+.event-remove{background:transparent;color:#ffa6b2;border:1px solid #6e4653;border-radius:8px;padding:8px 10px;cursor:pointer}
+.event-remove:hover{background:#52323b}
+@media(max-width:900px){.event-layout{grid-template-columns:1fr}.event-register-form{grid-template-columns:1fr 1fr}.event-register-form .form-actions{grid-column:1/-1}.event-heading{flex-direction:column}}
+@media(max-width:600px){.event-register-form{grid-template-columns:1fr}.event-register-form .form-actions{grid-column:auto}}

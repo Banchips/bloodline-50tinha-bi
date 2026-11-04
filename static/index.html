@@ -57,8 +57,41 @@
       <div class="admin-hero"><div><span class="kicker">ÁREA RESTRITA</span><h1>Centro de <em>controle.</em></h1><p>Cadastre resultados, gerencie temporadas e defina quais tribos podem pontuar.</p></div><div class="admin-buttons"><button class="button-outline" id="adminBack">← Voltar ao painel</button><button class="button-outline hidden" id="logoutBtn">Sair da administração</button></div></div>
       <div id="loginBox" class="login-area panel"><h2>Acesso do administrador</h2><p>O painel público é livre. Para alterar dados, entre com sua conta administrativa individual.</p><form id="loginForm" class="inline-form"><input id="adminUsername" name="username" type="text" placeholder="Usuário" autocomplete="username" required maxlength="32"><input id="adminPassword" name="password" type="password" placeholder="Senha" autocomplete="current-password" required><button type="submit" class="button-primary">Entrar</button></form><p class="muted-note" id="adminConfigMessage"></p></div>
       <div id="adminContent" class="hidden"><div class="account-chip" id="adminIdentity"></div>
-        <div class="admin-tabs" role="tablist"><button type="button" class="admin-tab active" data-admin-tab="review">Mesas para aprovar <span id="pendingCount" class="count-dot"></span></button><button type="button" class="admin-tab" data-admin-tab="results">Resultados</button><button type="button" class="admin-tab" data-admin-tab="roster">Jogadores e temporadas</button><button type="button" class="admin-tab" data-admin-tab="eligibility">Tribos sem pontuação</button><button type="button" class="admin-tab" data-admin-tab="import">Importar / exportar</button><button type="button" class="admin-tab" data-admin-tab="accounts">Acessos</button></div>
+        <div class="admin-tabs" role="tablist"><button type="button" class="admin-tab active" data-admin-tab="review">Mesas para aprovar <span id="pendingCount" class="count-dot"></span></button><button type="button" class="admin-tab" data-admin-tab="events">Eventos e inscrições</button><button type="button" class="admin-tab" data-admin-tab="results">Resultados</button><button type="button" class="admin-tab" data-admin-tab="roster">Jogadores e temporadas</button><button type="button" class="admin-tab" data-admin-tab="eligibility">Tribos sem pontuação</button><button type="button" class="admin-tab" data-admin-tab="import">Importar / exportar</button><button type="button" class="admin-tab" data-admin-tab="accounts">Acessos</button></div>
         <div class="admin-pane" id="pane-review"><section class="panel padded"><span class="kicker">MODERAÇÃO</span><h2>Mesas enviadas pelos jogadores</h2><p>Confira a composição, os decks, a vitória ou os empates. Somente mesas aprovadas entram na classificação.</p><div id="tableReviewList" class="review-list"></div></section></div>
+        <div class="admin-pane hidden" id="pane-events">
+          <div class="admin-layout event-layout">
+            <section class="panel padded">
+              <span class="kicker">ORGANIZAÇÃO DA LIGA</span>
+              <h2 id="eventFormTitle">Criar novo evento</h2>
+              <p>Cadastre a data, o nome, a temporada e o EP. A lista de jogadores será gerenciada separadamente para cada evento.</p>
+              <form id="eventForm" class="stack-form">
+                <label>Dia do evento<input id="eventDate" type="text" inputmode="numeric" maxlength="10" placeholder="DD/MM/AAAA" pattern="(0[1-9]|[12][0-9]|3[01])/(0[1-9]|1[0-2])/[0-9]{4}" title="Digite a data no formato DD/MM/AAAA" required></label>
+                <label>Nome do evento<input id="eventName" maxlength="120" placeholder="Ex.: Bloodline 50tinha — Etapa 1" required></label>
+                <label>Season do evento<select id="eventSeason" required></select></label>
+                <label>EP do evento<input id="eventEpisode" maxlength="40" placeholder="Ex.: EP 1" required></label>
+                <div class="form-actions"><button class="button-primary" type="submit" id="eventSave">Criar evento</button><button class="button-outline hidden" type="button" id="eventCancelEdit">Cancelar edição</button></div>
+              </form>
+              <div class="helper-panel">Cadastrar eventos e inscrições <strong>não altera o ranking</strong>. Check-in, pagamento e decklist são controles administrativos; os pareamentos serão adicionados em uma próxima etapa.</div>
+            </section>
+            <section class="panel padded">
+              <span class="kicker">AGENDA</span><h2>Eventos cadastrados</h2>
+              <div id="eventList" class="event-list"></div>
+            </section>
+          </div>
+          <section class="panel padded event-roster-panel">
+            <div class="panel-heading event-heading"><div><span class="kicker">PRESENÇA E INSCRIÇÕES</span><h2 id="eventRosterTitle">Lista de jogadores</h2><p id="eventRosterSubtitle">Selecione um evento para cadastrar jogadores e conferir as marcações.</p></div><div id="eventRosterStats" class="event-mini-stats"></div></div>
+            <div id="eventRosterContent" class="hidden">
+              <form id="eventRegisterForm" class="form-grid event-register-form">
+                <label>Nome do jogador<select id="eventPlayer" required></select></label>
+                <label>Tribo<select id="eventTribe" required></select></label>
+                <div class="form-actions"><button class="button-primary" type="submit">Adicionar jogador</button></div>
+              </form>
+              <div class="table-scroller"><table class="event-roster-table"><thead><tr><th>JOGADOR</th><th>TRIBO</th><th>CHECK-IN</th><th>PAGAMENTO</th><th>DECKLIST</th><th>AÇÕES</th></tr></thead><tbody id="eventRosterRows"></tbody></table></div>
+              <p class="muted-note">Clique nos indicadores para alternar. ✓ = confirmado; — = pendente ou não aprovado. O status da decklist é marcado pela organização.</p>
+            </div>
+          </section>
+        </div>
         <div class="admin-pane hidden" id="pane-results">
           <div class="admin-layout"><section class="panel padded"><div class="panel-heading"><div><span class="kicker">LANÇAMENTO</span><h2 id="matchFormTitle">Adicionar partida</h2></div></div>
             <form id="matchForm" class="form-grid">

@@ -14,7 +14,7 @@ function isoFromBrazilianDate(value){
 }
 const resultLabels = {V:'Vitória · 3 pts',E:'Empate · 1 pt',D:'Derrota · 0 pts'};
 const colors = ['#c6ef50','#9e8eff','#69d7e3','#f2b47c','#f18ba8'];
-const state = {public:null, admin:null, season:'all', adminMode:false, loggedIn:false, editing:null, editingDeck:null, tables:[], canManageAdmins:false, admins:[]};
+const state = {public:null, admin:null, season:'all', adminMode:false, loggedIn:false, editing:null, editingDeck:null, tables:[], canManageAdmins:false, admins:[], events:[], selectedEventId:null, editingEventId:null};
 let toastTimer;
 function toast(msg,error=false){const t=$('toast');t.textContent=msg;t.classList.toggle('error',error);t.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('visible'),4500)}
 async function api(path,options={}){
@@ -127,13 +127,13 @@ async function refreshAdminSession(){
    $('restoreDbSection').classList.toggle('hidden',!state.canManageAdmins);
    $('adminIdentity').textContent=d.admin?`Conectado como ${d.username} · ${state.canManageAdmins?'Conta principal':'Administrador'}`:'';
    $('adminConfigMessage').textContent=d.admin_configured?'':'Conta principal não configurada. Execute o sistema pelo terminal para criar o primeiro usuário.';
-   if(d.admin){await loadAdmin();if(state.canManageAdmins)await loadAdminUsers()}
+   if(d.admin){await loadAdmin();await loadLeagueEvents();if(state.canManageAdmins)await loadAdminUsers()}
  }catch(err){toast(err.message,true)}
 }
 async function loadAdmin(){
  try{
    state.admin=await api('/api/admin?season=all');
-   renderAdmin();
+   renderAdmin();refreshEventOptions();
  }catch(err){if(err.message.includes('administrativo')){state.loggedIn=false;refreshAdminSession()}else toast(err.message,true)}
 }
 async function loadAdminUsers(){
@@ -364,6 +364,90 @@ async function submitDeck(e){
     resetDeck();toast(editing?'Decklist atualizada.':'Decklist cadastrada.');await loadPublic();if(state.loggedIn)await loadAdmin();
   }catch(err){toast(err.message,true)}
 }
+// Gestão administrativa de eventos, independente das partidas e do ranking.
+async function loadLeagueEvents(){
+  if(!state.loggedIn)return;
+  try{
+    const data=await api('/api/admin/events');
+    state.events=data.events||[];
+    if(!state.events.some(e=>e.id===state.selectedEventId))state.selectedEventId=state.events[0]?.id||null;
+    renderLeagueEvents();
+  }catch(err){toast(err.message,true)}
+}
+function resetEventForm(){
+  state.editingEventId=null;
+  $('eventForm').reset();$('eventDate').value=fmtDate(today());
+  $('eventSeason').value=state.season!=='all'?state.season:String(state.admin?.master?.seasons?.at(-1)?.id||'');
+  $('eventFormTitle').textContent='Criar novo evento';$('eventSave').textContent='Criar evento';
+  $('eventCancelEdit').classList.add('hidden');
+}
+function refreshEventOptions(){
+  const m=state.admin?.master;
+  if(!m)return;
+  const oldSeason=$('eventSeason').value,oldPlayer=$('eventPlayer').value,oldTribe=$('eventTribe').value;
+  $('eventSeason').innerHTML=selectOptions(m.seasons,oldSeason|| (state.season!=='all'?state.season:m.seasons.at(-1)?.id),'Selecione a season');
+  $('eventPlayer').innerHTML=selectOptions(m.players,oldPlayer,'Selecione um jogador');
+  $('eventTribe').innerHTML=selectOptions(m.tribes,oldTribe,'Selecione a tribo');
+}
+function renderLeagueEvents(){
+  const events=state.events;
+  $('eventList').innerHTML=events.length?events.map(ev=>`<article class="event-list-item ${ev.id===state.selectedEventId?'selected':''}">
+   <button class="event-list-select" type="button" data-event-open="${ev.id}" aria-pressed="${ev.id===state.selectedEventId}">
+    <span class="event-day">${safe(fmtDate(ev.event_date))}</span><strong>${safe(ev.name)}</strong>
+    <small>${safe(ev.season_name)} · ${safe(ev.episode)} · ${ev.total_registered} jogador(es)</small>
+   </button><button class="event-edit-btn" type="button" data-event-edit="${ev.id}" aria-label="Editar evento ${safe(ev.name)}">Editar</button>
+  </article>`).join(''):'<p class="muted-note">Nenhum evento cadastrado. Crie o primeiro no formulário ao lado.</p>';
+  $('eventList').querySelectorAll('[data-event-open]').forEach(btn=>btn.addEventListener('click',()=>{
+    state.selectedEventId=Number(btn.dataset.eventOpen);renderLeagueEvents();
+  }));
+  $('eventList').querySelectorAll('[data-event-edit]').forEach(btn=>btn.addEventListener('click',()=>{
+    const ev=events.find(e=>e.id===Number(btn.dataset.eventEdit));if(!ev)return;
+    state.selectedEventId=ev.id;state.editingEventId=ev.id;
+    $('eventDate').value=fmtDate(ev.event_date);$('eventName').value=ev.name;
+    $('eventSeason').value=String(ev.season_id);$('eventEpisode').value=ev.episode;
+    $('eventFormTitle').textContent='Editar evento';$('eventSave').textContent='Salvar evento';
+    $('eventCancelEdit').classList.remove('hidden');renderLeagueEvents();
+    $('eventForm').scrollIntoView({behavior:'smooth',block:'start'});
+  }));
+  renderEventRoster();
+}
+function renderEventRoster(){
+  const ev=state.events.find(x=>x.id===state.selectedEventId);
+  $('eventRosterTitle').textContent=ev?ev.name:'Lista de jogadores';
+  $('eventRosterSubtitle').textContent=ev?`${fmtDate(ev.event_date)} · ${ev.season_name} · ${ev.episode}`:'Cadastre e selecione um evento para inscrever jogadores.';
+  $('eventRosterContent').classList.toggle('hidden',!ev);
+  $('eventRosterStats').innerHTML=ev?`<span>${ev.total_registered} inscritos</span><span>${ev.total_checkin} check-ins</span><span>${ev.total_paid} pagos</span><span>${ev.total_decklists_ok} decklists OK</span>`:'';
+  if(!ev)return;
+  const tribes=state.admin?.master?.tribes||[];
+  $('eventRosterRows').innerHTML=ev.registrations.length?ev.registrations.map(r=>`<tr>
+    <td><strong>${safe(r.player_name)}</strong></td>
+    <td><select class="event-tribe-select" data-event-tribe="${r.id}" aria-label="Tribo de ${safe(r.player_name)}">${tribes.map(t=>`<option value="${t.id}" ${t.id===r.tribe_id?'selected':''}>${safe(t.name)}</option>`).join('')}</select></td>
+    <td><button type="button" class="event-toggle ${r.checkin?'on':''}" data-event-toggle="${r.id}" data-field="checkin" aria-pressed="${Boolean(r.checkin)}" title="${r.checkin?'Check-in confirmado':'Check-in pendente'}"><span aria-hidden="true">${r.checkin?'✓':'○'}</span><small>${r.checkin?'Feito':'Pendente'}</small></button></td>
+    <td><button type="button" class="event-toggle ${r.paid?'on':''}" data-event-toggle="${r.id}" data-field="paid" aria-pressed="${Boolean(r.paid)}" title="${r.paid?'Pagamento confirmado':'Pagamento pendente'}"><span aria-hidden="true">${r.paid?'✓':'○'}</span><small>${r.paid?'Pago':'Pendente'}</small></button></td>
+    <td><button type="button" class="event-toggle ${r.decklist_ok?'on':''}" data-event-toggle="${r.id}" data-field="decklist_ok" aria-pressed="${Boolean(r.decklist_ok)}" title="${r.decklist_ok?'Decklist aprovada':'Decklist ainda não aprovada'}"><span aria-hidden="true">${r.decklist_ok?'✓':'✕'}</span><small>${r.decklist_ok?'OK':'Não'}</small></button></td>
+    <td><button type="button" class="event-remove" data-event-remove="${r.id}" aria-label="Remover ${safe(r.player_name)} deste evento">Remover</button></td>
+  </tr>`).join(''):'<tr><td class="empty" colspan="6">Nenhum jogador inscrito neste evento.</td></tr>';
+  $('eventRosterRows').querySelectorAll('[data-event-toggle]').forEach(btn=>btn.addEventListener('click',async()=>{
+    const registration=ev.registrations.find(x=>x.id===Number(btn.dataset.eventToggle));if(!registration)return;
+    const field=btn.dataset.field;
+    btn.disabled=true;
+    try{
+      await api(`/api/admin/events/${ev.id}/registrations/${registration.id}`,{method:'PUT',body:{[field]:!Boolean(registration[field])}});
+      await loadLeagueEvents();
+    }catch(err){toast(err.message,true);btn.disabled=false}
+  }));
+  $('eventRosterRows').querySelectorAll('[data-event-tribe]').forEach(sel=>sel.addEventListener('change',async()=>{
+    const id=Number(sel.dataset.eventTribe);sel.disabled=true;
+    try{await api(`/api/admin/events/${ev.id}/registrations/${id}`,{method:'PUT',body:{tribe_id:Number(sel.value)}});await loadLeagueEvents();toast('Tribo atualizada.');}
+    catch(err){toast(err.message,true);await loadLeagueEvents()}
+  }));
+  $('eventRosterRows').querySelectorAll('[data-event-remove]').forEach(btn=>btn.addEventListener('click',async()=>{
+    const registration=ev.registrations.find(x=>x.id===Number(btn.dataset.eventRemove));
+    if(!registration||!confirm(`Remover ${registration.player_name} deste evento? Isso não apaga o cadastro geral nem resultados.`))return;
+    try{await api(`/api/admin/events/${ev.id}/registrations/${registration.id}`,{method:'DELETE',body:{}});await loadLeagueEvents();toast('Inscrição removida.');}
+    catch(err){toast(err.message,true)}
+  }));
+}
 function bindEvents(){
  $('homeBrand').addEventListener('click',()=>showPanel('public'));$('adminNav').addEventListener('click',()=>showPanel('admin'));$('tableNav').addEventListener('click',()=>showPanel('table'));$('decksNav').addEventListener('click',()=>showPanel('decks'));$('adminBack').addEventListener('click',()=>showPanel('public'));document.querySelectorAll('.backPublic').forEach(b=>b.addEventListener('click',()=>showPanel('public')));
  $('seasonSelect').addEventListener('change',e=>{state.season=e.target.value;loadPublic()});
@@ -372,6 +456,26 @@ function bindEvents(){
  document.addEventListener('keydown',e=>{if(e.key==='Escape')$('detailOverlay').classList.add('hidden')});
  $('loginForm').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/login',{method:'POST',body:{username:$('adminUsername').value.trim(),password:$('adminPassword').value}});$('adminPassword').value='';toast('Acesso autorizado.');await refreshAdminSession()}catch(err){toast(err.message,true)}});
  $('logoutBtn').addEventListener('click',async()=>{try{await api('/api/logout',{method:'POST',body:{}});state.admin=null;await refreshAdminSession();toast('Sessão encerrada.')}catch(err){toast(err.message,true)}});
+ $('eventForm').addEventListener('submit',async e=>{
+   e.preventDefault();
+   const editing=state.editingEventId;
+   try{
+     const body={name:$('eventName').value.trim(),event_date:isoFromBrazilianDate($('eventDate').value),season_id:Number($('eventSeason').value),episode:$('eventEpisode').value.trim()};
+     const data=await api(editing?`/api/admin/events/${editing}`:'/api/admin/events',{method:editing?'PUT':'POST',body});
+     if(!editing)state.selectedEventId=data.id;
+     resetEventForm();await loadLeagueEvents();toast(editing?'Evento atualizado.':'Evento criado com sucesso.');
+   }catch(err){toast(err.message,true)}
+ });
+ $('eventCancelEdit').addEventListener('click',resetEventForm);
+ $('eventRegisterForm').addEventListener('submit',async e=>{
+   e.preventDefault();
+   if(!state.selectedEventId)return toast('Selecione um evento.',true);
+   try{
+     await api(`/api/admin/events/${state.selectedEventId}/registrations`,{method:'POST',body:{player_id:Number($('eventPlayer').value),tribe_id:Number($('eventTribe').value)}});
+     $('eventPlayer').value='';$('eventTribe').value='';
+     await loadLeagueEvents();toast('Jogador adicionado ao evento.');
+   }catch(err){toast(err.message,true)}
+ });
  $('createAdminForm').addEventListener('submit',async e=>{
    e.preventDefault();
    try{
@@ -448,4 +552,4 @@ function bindEvents(){
  $('deckForm').addEventListener('submit',submitDeck);
  $('deckCancelBtn').addEventListener('click',resetDeck);
 }
-bindEvents();loadPublic(true).then(()=>{resetMatchForm();resetTable();repopulateTableSlots()});
+bindEvents();$('eventDate').value=fmtDate(today());loadPublic(true).then(()=>{resetMatchForm();resetTable();repopulateTableSlots()});

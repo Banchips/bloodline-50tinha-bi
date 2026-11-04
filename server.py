@@ -126,6 +126,27 @@ def init_db():
           deck_id INTEGER REFERENCES decks(id) ON DELETE SET NULL,
           result TEXT NOT NULL CHECK(result IN ('V','E','D')),
           UNIQUE(table_id,player_id));
+        CREATE TABLE IF NOT EXISTS league_events (
+          id INTEGER PRIMARY KEY,
+          event_date TEXT NOT NULL,
+          name TEXT NOT NULL,
+          season_id INTEGER NOT NULL REFERENCES seasons(id),
+          episode TEXT NOT NULL COLLATE NOCASE,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(season_id,episode));
+        CREATE INDEX IF NOT EXISTS idx_league_events_date ON league_events(event_date DESC);
+        CREATE TABLE IF NOT EXISTS event_registrations (
+          id INTEGER PRIMARY KEY,
+          event_id INTEGER NOT NULL REFERENCES league_events(id) ON DELETE CASCADE,
+          player_id INTEGER NOT NULL REFERENCES players(id),
+          tribe_id INTEGER NOT NULL REFERENCES tribes(id),
+          checkin INTEGER NOT NULL DEFAULT 0 CHECK(checkin IN (0,1)),
+          paid INTEGER NOT NULL DEFAULT 0 CHECK(paid IN (0,1)),
+          decklist_ok INTEGER NOT NULL DEFAULT 0 CHECK(decklist_ok IN (0,1)),
+          registered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(event_id,player_id));
+        CREATE INDEX IF NOT EXISTS idx_event_registrations_event ON event_registrations(event_id);
         ''')
         # As sessões antigas da v2.1 não estavam associadas a um usuário.
         # Invalidá-las ao migrar impede que cookies antigos deem acesso irrestrito.
@@ -877,8 +898,57 @@ def throttle_public(ip, kind, limit):
         times.append(now)
         PUBLIC_ACTIONS[key]=times
 
+def validate_league_event(db, obj):
+    season_id = int_id(obj.get('season_id'), 'Temporada')
+    if not exists(db, 'seasons', season_id):
+        raise UserInputError('Temporada inexistente.')
+    return (date_value(obj.get('event_date')),
+            txt(obj.get('name'), 'Nome do evento', 120),
+            season_id, txt(obj.get('episode'), 'EP do evento', 40))
+
+
+def validate_event_registration(db, obj):
+    player_id = int_id(obj.get('player_id'), 'Jogador')
+    tribe_id = int_id(obj.get('tribe_id'), 'Tribo')
+    if not exists(db, 'players', player_id) or not exists(db, 'tribes', tribe_id):
+        raise UserInputError('Jogador ou tribo inexistente.')
+    return player_id, tribe_id
+
+
+def event_status_field(value, field):
+    if type(value) is not bool:
+        raise UserInputError(f'{field} precisa ser verdadeiro ou falso.')
+    return int(value)
+
+
+def list_league_events(db):
+    events = [dict(row) for row in db.execute('''
+        SELECT e.id,e.name,e.event_date,e.season_id,e.episode,e.created_at,e.updated_at,
+               s.name AS season_name
+        FROM league_events e JOIN seasons s ON s.id=e.season_id
+        ORDER BY e.event_date DESC,e.id DESC''')]
+    registers = [dict(row) for row in db.execute('''
+        SELECT er.id,er.event_id,er.player_id,er.tribe_id,er.checkin,er.paid,er.decklist_ok,
+               er.registered_at,p.name AS player_name,t.name AS tribe_name
+        FROM event_registrations er
+        JOIN players p ON p.id=er.player_id
+        JOIN tribes t ON t.id=er.tribe_id
+        ORDER BY p.name COLLATE NOCASE''')]
+    grouped = {ev['id']: [] for ev in events}
+    for row in registers:
+        if row['event_id'] in grouped:
+            grouped[row['event_id']].append(row)
+    for ev in events:
+        ev['registrations'] = grouped[ev['id']]
+        ev['total_registered'] = len(ev['registrations'])
+        ev['total_checkin'] = sum(row['checkin'] for row in ev['registrations'])
+        ev['total_paid'] = sum(row['paid'] for row in ev['registrations'])
+        ev['total_decklists_ok'] = sum(row['decklist_ok'] for row in ev['registrations'])
+    return events
+
+
 class Handler(BaseHTTPRequestHandler):
-    server_version = 'BloodlineBI/2.2.3'
+    server_version = 'BloodlineBI/2.2.5'
 
     def log_message(self, fmt, *args):
         print('%s - %s' % (self.address_string(), fmt % args))
@@ -1043,6 +1113,10 @@ class Handler(BaseHTTPRequestHandler):
                     'username':admin['username'] if admin else None,
                     'role':admin['role'] if admin else None,
                     'can_manage_admins':bool(admin and admin['role']=='owner')})
+            if path == '/api/admin/events':
+                if not self.require_admin():return
+                with conn_db() as db:
+                    return self.respond(200, {'events':list_league_events(db)})
             if path == '/api/admin/users':
                 if not self.require_owner():return
                 with conn_db() as db:
@@ -1215,6 +1289,66 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200,{'ok':True})
             if not self.require_admin():return
             with DB_LOCK, conn_db() as db:
+                if path == '/api/admin/events' and method == 'POST':
+                    values = validate_league_event(db,obj)
+                    if db.execute('SELECT 1 FROM league_events WHERE season_id=? AND episode=? COLLATE NOCASE',
+                                  (values[2],values[3])).fetchone():
+                        raise UserInputError('Já existe um evento com esse EP nesta temporada.')
+                    cur = db.execute('INSERT INTO league_events(event_date,name,season_id,episode) VALUES(?,?,?,?)', values)
+                    db.commit()
+                    return self.respond(201, {'ok':True,'id':cur.lastrowid})
+                event_match = re.fullmatch(r'/api/admin/events/(\d+)',path)
+                if event_match and method == 'PUT':
+                    event_id = int(event_match.group(1))
+                    if not exists(db,'league_events',event_id):
+                        raise UserInputError('Evento não encontrado.')
+                    values = validate_league_event(db,obj)
+                    if db.execute('''SELECT 1 FROM league_events WHERE season_id=? AND episode=? COLLATE NOCASE
+                                     AND id<>?''',(values[2],values[3],event_id)).fetchone():
+                        raise UserInputError('Já existe um evento com esse EP nesta temporada.')
+                    db.execute('UPDATE league_events SET event_date=?,name=?,season_id=?,episode=?,updated_at=CURRENT_TIMESTAMP WHERE id=?',(*values,event_id))
+                    db.commit()
+                    return self.respond(200, {'ok':True})
+                register_route = re.fullmatch(r'/api/admin/events/(\d+)/registrations',path)
+                if register_route and method == 'POST':
+                    event_id = int(register_route.group(1))
+                    if not exists(db,'league_events',event_id):
+                        raise UserInputError('Evento não encontrado.')
+                    player_id, tribe_id = validate_event_registration(db,obj)
+                    if db.execute('SELECT 1 FROM event_registrations WHERE event_id=? AND player_id=?',
+                                  (event_id,player_id)).fetchone():
+                        raise UserInputError('Esse jogador já está inscrito no evento. Edite a tribo na lista.')
+                    cur = db.execute('INSERT INTO event_registrations(event_id,player_id,tribe_id) VALUES(?,?,?)',
+                                     (event_id,player_id,tribe_id))
+                    db.commit()
+                    return self.respond(201,{'ok':True,'id':cur.lastrowid})
+                reg_match = re.fullmatch(r'/api/admin/events/(\d+)/registrations/(\d+)',path)
+                if reg_match and method in ('PUT','DELETE'):
+                    event_id = int(reg_match.group(1))
+                    registration_id = int(reg_match.group(2))
+                    found = db.execute('SELECT * FROM event_registrations WHERE id=? AND event_id=?',
+                                       (registration_id,event_id)).fetchone()
+                    if not found:
+                        raise UserInputError('Inscrição não encontrada neste evento.')
+                    if method == 'DELETE':
+                        db.execute('DELETE FROM event_registrations WHERE id=?',(registration_id,))
+                        db.commit()
+                        return self.respond(200, {'ok':True})
+                    if 'tribe_id' in obj:
+                        tribe_id = int_id(obj['tribe_id'],'Tribo')
+                        if not exists(db,'tribes',tribe_id):
+                            raise UserInputError('Tribo inexistente.')
+                        db.execute('UPDATE event_registrations SET tribe_id=? WHERE id=?',(tribe_id,registration_id))
+                    changes = {}
+                    for field in ('checkin','paid','decklist_ok'):
+                        if field in obj:
+                            changes[field] = event_status_field(obj[field],field)
+                    if not changes and 'tribe_id' not in obj:
+                        raise UserInputError('Nenhuma alteração informada.')
+                    for field,value in changes.items():
+                        db.execute(f'UPDATE event_registrations SET {field}=? WHERE id=?',(value,registration_id))
+                    db.commit()
+                    return self.respond(200, {'ok':True})
                 table_match=re.fullmatch(r'/api/tables/(\d+)',path)
                 if table_match and method=='PUT':
                     table_id=int(table_match.group(1))
