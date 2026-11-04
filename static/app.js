@@ -115,6 +115,7 @@ async function refreshAdminSession(){
    $('adminContent').classList.toggle('hidden',!d.admin);
    $('logoutBtn').classList.toggle('hidden',!d.admin);
    $('ownerAdminSection').classList.toggle('hidden',!state.canManageAdmins);
+   $('restoreDbSection').classList.toggle('hidden',!state.canManageAdmins);
    $('adminIdentity').textContent=d.admin?`Conectado como ${d.username} · ${state.canManageAdmins?'Conta principal':'Administrador'}`:'';
    $('adminConfigMessage').textContent=d.admin_configured?'':'Conta principal não configurada. Execute o sistema pelo terminal para criar o primeiro usuário.';
    if(d.admin){await loadAdmin();if(state.canManageAdmins)await loadAdminUsers()}
@@ -401,6 +402,33 @@ function bindEvents(){
    try{await api(path,{method:state.editing?'PUT':'POST',body});toast(state.editing?'Partida atualizada.':'Partida cadastrada.');resetMatchForm();await reloadAll()}catch(err){toast(err.message,true)}
  });
  $('cancelEdit').addEventListener('click',resetMatchForm);
+ $('restoreDbForm').addEventListener('submit',async e=>{
+   e.preventDefault();
+   const file=$('restoreDbFile').files[0];
+   if(!file)return;
+   try{
+     if(!file.name.toLowerCase().endsWith('.db'))throw new Error('Selecione o banco antigo com extensão .db.');
+     if(file.size>64*1024*1024)throw new Error('O arquivo excede o limite de 64 MB.');
+     if(!confirm(`Importar os resultados de "${file.name}" para o site online?\n\nAs contas administrativas serão mantidas. O sistema fará backup antes de importar.`))return;
+     const button=$('restoreDbButton');
+     button.disabled=true;button.textContent='Importando e criando backup...';
+     $('restoreDbSummary').textContent='Enviando e conferindo o banco. Não feche esta página durante a importação.';
+     try{
+       const response=await fetch('/api/admin/import-db',{
+         method:'POST',credentials:'same-origin',
+         headers:{'X-Bloodline-Request':'1','Content-Type':'application/octet-stream'},
+         body:file
+       });
+       let data;
+       try{data=await response.json()}catch{throw new Error('Resposta inválida do servidor. Confira o ranking antes de tentar novamente.')}
+       if(!response.ok)throw new Error(data.error||'Falha ao importar o banco.');
+       const details=Object.entries(data.inserted||{}).filter(([k,v])=>Number(v)>0 && k!=='duplicates').map(([k,v])=>`${k}: ${v}`).join(' · ')||'Todos os registros já existiam';
+       $('restoreDbSummary').textContent=`Importação concluída!\nJogadores encontrados: ${data.found.players||0} · Resultados encontrados: ${data.found.matches||0}\nNovos registros: ${details}\nAdministradores preservados: ${data.admins_preserved}. Backup: ${data.backup_created?'criado':'destino inicialmente vazio'}.`;
+       toast('Dados importados. Ranking e perfis atualizados.');
+       await reloadAll();
+     }finally{button.disabled=false;button.textContent='Importar dados do campeonato'}
+   }catch(err){$('restoreDbSummary').textContent='Não foi possível importar: '+err.message;toast(err.message,true)}
+ });
  $('importForm').addEventListener('submit',async e=>{e.preventDefault();const file=$('importFile').files[0];if(!file)return;try{if(file.size>2_000_000)throw new Error('O arquivo não pode exceder 2 MB.');const bytes=await file.arrayBuffer();let csv;try{csv=new TextDecoder('utf-8',{fatal:true}).decode(bytes)}catch{csv=new TextDecoder('windows-1252').decode(bytes)}const report=await api('/api/import',{method:'POST',body:{csv,season_id:$('importSeason').value}});$('importSummary').textContent=report.message+'\n'+report.errors.join('\n');toast(`${report.inserted} partidas importadas.`);await reloadAll()}catch(err){toast(err.message,true)}});
  $('downloadCsv').addEventListener('click',()=>downloadEndpoint('/api/export.csv?season='+encodeURIComponent(state.season),'bloodline_resultados.csv'));
  $('downloadJson').addEventListener('click',()=>downloadEndpoint('/api/backup.json','bloodline_backup.json'));

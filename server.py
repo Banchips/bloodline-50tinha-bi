@@ -13,6 +13,7 @@ import re
 import secrets
 import sys
 import sqlite3
+import tempfile
 import threading
 import time
 import unicodedata
@@ -819,7 +820,7 @@ def throttle_public(ip, kind, limit):
         PUBLIC_ACTIONS[key]=times
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = 'BloodlineBI/2.2'
+    server_version = 'BloodlineBI/2.2.3'
 
     def log_message(self, fmt, *args):
         print('%s - %s' % (self.address_string(), fmt % args))
@@ -904,6 +905,67 @@ class Handler(BaseHTTPRequestHandler):
         except (json.JSONDecodeError,ValueError):
             raise UserInputError('JSON inválido.')
 
+    def import_uploaded_database(self):
+        """Importa um snapshot SQLite pelo navegador, sem substituir o banco nem admins.
+
+        O arquivo chega como octet-stream; nada é enviado ao GitHub ou servido
+        pela aplicação. Recuperação e backups usam o mesmo importador já testado.
+        """
+        if not self.require_owner():
+            return
+        if self.headers.get('X-Bloodline-Request') != '1':
+            raise UserInputError('Cabeçalho de proteção ausente.')
+        origin = self.headers.get('Origin', '')
+        host = self.headers.get('Host', '')
+        if origin and origin not in ('http://' + host, 'https://' + host):
+            raise UserInputError('Origem não autorizada.')
+        if self.headers.get('Content-Type', '').split(';')[0].strip() != 'application/octet-stream':
+            raise UserInputError('Formato de envio inválido. Selecione um arquivo .db.')
+        try:
+            size = int(self.headers.get('Content-Length', '0'))
+        except ValueError:
+            raise UserInputError('Tamanho do arquivo inválido.')
+        max_size = 64 * 1024 * 1024
+        if size < 100 or size > max_size:
+            raise UserInputError('O banco deve ter entre 100 bytes e 64 MB.')
+
+        # Criar temporário fora do diretório público e nunca escrever sobre
+        # bloodline.db. O tamanho é limitado antes da leitura.
+        with tempfile.TemporaryDirectory(prefix='bloodline_upload_') as work:
+            source_file = Path(work) / 'importado.db'
+            with source_file.open('wb') as output:
+                remaining = size
+                while remaining:
+                    chunk = self.rfile.read(min(1 << 20, remaining))
+                    if not chunk:
+                        raise UserInputError('Upload interrompido. Tente novamente.')
+                    output.write(chunk)
+                    remaining -= len(chunk)
+            with source_file.open('rb') as check:
+                if check.read(16) != b'SQLite format 3\x00':
+                    raise UserInputError('O arquivo selecionado não é um banco SQLite válido.')
+            from recuperar_banco import migrate, RecoveryError
+            # Bloqueia gravações concorrentes durante a importação e criação
+            # de backups; resultados já importados não serão duplicados.
+            with DB_LOCK:
+                # A conta pode ter sido desativada enquanto recebíamos o upload.
+                admin = self.current_admin()
+                if admin is None or admin['role'] != 'owner':
+                    return self.respond(403, {'error': 'Apenas a conta principal pode importar bancos.'})
+                try:
+                    result = migrate(source_file, DB_PATH, DB_PATH.parent / 'backups')
+                except RecoveryError as error:
+                    return self.respond(409, {'error': str(error)})
+            summary = {
+                'ok': True,
+                'found': result['source_counts'],
+                'inserted': result['inserted'],
+                'totals': result['dest_counts'],
+                'admins_preserved': result['admins_preserved'],
+                'backup_created': bool(result['backup']),
+            }
+            return self.respond(200, summary)
+
     def do_GET(self):
         try:
             target = urlparse(self.path)
@@ -967,8 +1029,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def write(self, method):
         try:
-            obj = self.read_json()
             path = urlparse(self.path).path
+            if path == '/api/admin/import-db' and method == 'POST':
+                return self.import_uploaded_database()
+            obj = self.read_json()
             if path == '/api/login' and method == 'POST':
                 ip = self.client_address[0]
                 now = time.time()

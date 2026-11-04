@@ -75,7 +75,21 @@
         <div class="admin-pane hidden" id="pane-eligibility"><section class="panel padded"><span class="kicker">REGRAS POR TEMPORADA</span><h2>Tribos que não pontuam</h2><p>Marque as tribos impedidas de pontuar na temporada selecionada. Os jogos permanecem no histórico; apenas os pontos válidos são zerados. Outras temporadas não serão alteradas.</p><div class="eligibility-head"><label>Temporada<select id="exSeason"></select></label><span class="pill" id="exCount">0 bloqueadas</span></div><div id="exclusionList" class="exclusion-grid"></div></section></div>
         <div class="admin-pane hidden" id="pane-import"><div class="admin-layout"><section class="panel padded"><span class="kicker">PLANILHAS</span><h2>Importar resultados CSV</h2><p>Compatível com <strong>DATA;PLAYER;TRIBO;R1;R2;R3</strong> ou com uma partida por linha usando <strong>DATA;JOGADOR;TRIBO;RODADA;RESULTADO</strong>. Valores V/E/D ou 3/1/0. Não existe pontuação por combo.</p><form id="importForm" class="stack-form"><label>Temporada padrão<select id="importSeason"></select></label><label>Arquivo CSV<input id="importFile" type="file" accept=".csv,text/csv" required></label><button class="button-primary">Importar arquivo</button></form><div id="importSummary" class="import-summary"></div></section>
           <section class="panel padded"><span class="kicker">DADOS</span><h2>Exportar e fazer backup</h2><p>Exporte os resultados com pontos válidos e indicador de tribo sem pontuação. Guarde cópias regulares do arquivo <strong>bloodline.db</strong>.</p><div class="download-actions"><button id="downloadCsv" class="button-outline">↓ Baixar resultados CSV</button><button id="downloadJson" class="button-outline">↓ Baixar backup JSON</button></div><div class="helper-panel">O arquivo JSON é uma cópia portátil de referência dos dados. A restauração automatizada não está incluída nesta versão. Para restauração integral, faça backup do banco SQLite.</div></section>
-        </div></div>
+        </div>
+          <section class="panel padded hidden" id="restoreDbSection">
+            <span class="kicker">MIGRAÇÃO SEM COMANDOS</span><h2>Importar banco antigo (.db)</h2>
+            <p>Use esta opção para trazer os resultados do BI que estava no seu computador. A conta principal pode selecionar o arquivo <strong>bloodline.db</strong> antigo diretamente nesta página.</p>
+            <p class="muted-note">A importação <strong>não substitui</strong> o banco online nem os administradores. O sistema faz backup, preserva os dados existentes e impede resultados duplicados. Se houver conflito, a operação é cancelada.</p>
+            <form id="restoreDbForm" class="stack-form">
+              <label>Banco antigo do Bloodline (.db)
+                <input type="file" id="restoreDbFile" accept=".db,application/x-sqlite3,application/vnd.sqlite3" required>
+              </label>
+              <button type="submit" id="restoreDbButton" class="button-primary">Importar dados do campeonato</button>
+            </form>
+            <div id="restoreDbSummary" class="import-summary" role="status" aria-live="polite"></div>
+            <div class="helper-panel">Antes de escolher o arquivo, feche o BI antigo no computador para garantir que os resultados estejam salvos nele. Tamanho máximo: 64 MB. Não envie esse arquivo ao GitHub.</div>
+          </section>
+        </div>
         <div class="admin-pane hidden" id="pane-accounts">
           <div class="admin-layout">
             <section class="panel padded" id="ownerAdminSection">
