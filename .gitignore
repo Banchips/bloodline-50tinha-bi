@@ -1,0 +1,19 @@
+# Banco real e segredos jamais devem ir para o GitHub.
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+.env
+.env.*
+!.env.example
+backups/
+transferencia/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.idea/
+.vscode/
+*.log

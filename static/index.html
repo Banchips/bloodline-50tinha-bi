@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0c1020">
+  <title>Bloodline 50tinha • BI da Liga</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand" id="homeBrand"><div class="brand-symbol">B<span>50</span></div><div><strong>BLOODLINE</strong><small>50TINHA · INTELIGÊNCIA DA LIGA</small></div></div>
+    <div class="top-right"><span class="live"><span class="live-dot"></span> Ranking oficial da plataforma</span><button class="admin-access" id="tableNav">⚔ Enviar mesa</button><button class="admin-access" id="decksNav">▤ Decklists</button><button class="admin-access" id="adminNav"><span aria-hidden="true">⚙</span> Administração</button></div>
+  </header>
+  <main class="shell">
+    <section id="publicPanel">
+      <div class="hero">
+        <div><div class="eyebrow">PAINEL DE DESEMPENHO · COMMANDER</div><h1>A arena tem <em>números.</em></h1><p>Classificação, partidas e tribos da Bloodline 50tinha. O placar considera apenas os resultados elegíveis da temporada.</p></div>
+        <div class="hero-filters"><label for="seasonSelect">TEMPORADA</label><select id="seasonSelect" aria-label="Selecionar temporada"></select></div>
+      </div>
+      <div class="stats-grid" id="statsGrid"></div>
+      <div class="sections-grid">
+        <section class="panel ranking-panel">
+          <div class="panel-heading"><div><span class="kicker">COMPETIÇÃO</span><h2>Classificação por jogador e tribo</h2><p>Cada jogador aparece uma vez por tribo utilizada, com pontos e partidas separados. Desempate por vitórias e partidas elegíveis.</p></div><div class="search-wrap"><input id="rankingSearch" type="search" placeholder="Buscar jogador ou tribo..." aria-label="Buscar no ranking"></div></div>
+          <div class="table-scroller"><table class="ranking-table"><thead><tr><th>#</th><th>JOGADOR</th><th>PTS</th><th>PARTIDAS</th><th>V / E / D</th><th>TRIBO</th><th></th></tr></thead><tbody id="rankingRows"></tbody></table></div>
+          <div class="panel-foot" id="rankingFoot"></div>
+        </section>
+        <aside class="panel tribes-panel"><div class="panel-heading"><div><span class="kicker">META DA LIGA</span><h2>Tribos em destaque</h2><p>Pontos válidos por tribo na seleção.</p></div></div><div id="tribeBars" class="tribe-bars"></div></aside>
+      </div>
+      <section class="panel trend-panel"><div class="panel-heading"><div><span class="kicker">PROGRESSÃO</span><h2>Evolução do Top 5 · Jogador/Tribo</h2><p>As cinco combinações mais bem colocadas, com pontos próprios acumulados por evento.</p></div></div><div id="trendChart" class="trend-chart"></div><div id="trendLegend" class="trend-legend"></div></section>
+      <section class="panel matches-panel"><div class="panel-heading"><div><span class="kicker">HISTÓRICO</span><h2>Últimas partidas</h2><p>Resultados de tribos bloqueadas permanecem visíveis, com zero ponto válido.</p></div><input id="matchesSearch" type="search" placeholder="Filtrar partidas..." aria-label="Buscar partidas"></div><div class="table-scroller"><table class="matches-table"><thead><tr><th>DATA</th><th>ETAPA / RODADA</th><th>JOGADOR</th><th>TRIBO</th><th>RESULTADO</th><th>PONTOS VÁLIDOS</th></tr></thead><tbody id="matchRows"></tbody></table></div></section>
+      <div class="rule-note" id="ruleNote"></div>
+    </section>
+    <section id="tablePanel" class="hidden">
+      <div class="admin-hero"><div><span class="kicker">REGISTRO DE TORNEIO</span><h1>Resultado da <em>mesa.</em></h1><p>Informe o EP, a rodada e quem participou. A mesa comporta 3 ou 4 jogadores.</p></div><button class="button-outline backPublic">← Voltar ao ranking</button></div>
+      <section class="panel padded"><div class="section-intro"><span class="kicker">EPISÓDIO · RODADA · MESA</span><h2>Dados do torneio</h2></div>
+        <form id="tableForm" class="stack-form">
+          <div class="form-grid table-meta"><label>Temporada<select id="tSeason" required></select></label><label>EP do torneio<input id="tEpisode" maxlength="70" placeholder="Ex.: EP 3" required></label><label>Data<input id="tDate" type="date" required></label><label>Rodada<select id="tRound"><option value="1">Rodada 1</option><option value="2">Rodada 2</option><option value="3">Rodada 3</option><option value="4">Rodada 4</option><option value="5">Rodada 5</option><option value="6">Rodada 6</option></select></label><label>Número da mesa<input id="tTable" type="number" min="1" max="99" value="1" required></label><label>Quantidade de jogadores<select id="tCount"><option value="4">4 jogadores</option><option value="3">3 jogadores</option></select></label></div>
+          <div class="section-intro"><span class="kicker">QUEM PARTICIPOU?</span><h2>Jogadores da mesa</h2><p>Escolha cada jogador e sua tribo ou deck. Marque quem venceu, morreu (derrota) ou empatou.</p></div>
+          <div id="tableSlots" class="table-slots"></div>
+          <div class="form-grid"><label>Quem está enviando o resultado?<select id="tSubmitter" required></select></label></div>
+          <div class="helper-panel">Resultado válido: <strong>1 vitória + derrotas</strong> ou <strong>2, 3 ou 4 empates</strong> (os demais perdem). Ao enviar, ficará pendente até a conferência da organização. Apenas mesas aprovadas somam pontos no BI.</div>
+          <div class="form-actions"><button class="button-primary" type="submit">Enviar resultado para aprovação</button><button class="button-outline" type="button" id="tableReset">Limpar mesa</button></div>
+        </form>
+      </section>
+      <section class="panel padded"><span class="kicker">CONFERÊNCIA</span><h2>Mesas aprovadas</h2><p>Somente resultados conferidos pela administração.</p><div class="table-history" id="tableHistory"></div></section>
+    </section>
+    <section id="decksPanel" class="hidden">
+      <div class="admin-hero"><div><span class="kicker">ARQUIVO DOS PARTICIPANTES</span><h1>Decks da <em>Bloodline.</em></h1><p>Consulte as decklists e cadastre ou atualize a sua sem precisar de uma conta.</p></div><button class="button-outline backPublic">← Voltar ao ranking</button></div>
+      <div class="admin-layout"><section class="panel padded"><span class="kicker">ENVIAR DECKLIST</span><h2 id="deckFormTitle">Cadastrar meu deck</h2>
+          <form class="stack-form" id="deckForm"><label>Player<select id="dPlayer" required></select></label><label>Tribo<select id="dTribe" required></select></label><label>Nome do deck<input id="dName" maxlength="100" required placeholder="Ex.: Mendicant Core · Robôs"></label><label>Decklist — link da LigaMagic ou outra plataforma<input id="dUrl" type="url" maxlength="700" required placeholder="https://..."></label><div id="deckKeyBox" class="hidden"><label>Chave privada para editar<input id="dEditKey" placeholder="Cole sua chave de edição"></label></div><div class="form-actions"><button class="button-primary" id="deckSaveBtn" type="submit">Enviar decklist</button><button class="button-outline hidden" id="deckCancelBtn" type="button">Cancelar edição</button></div></form>
+          <div class="helper-panel">Ao cadastrar, você recebe uma <strong>chave privada de edição</strong>. Ela fica salva neste navegador. Guarde uma cópia para conseguir editar de outro aparelho. Não compartilhe a chave.</div><div id="deckCreated" class="deck-created hidden"></div>
+        </section><section class="panel padded"><span class="kicker">GALERIA</span><h2>Decks enviados</h2><div class="form-grid"><label>Player<select id="deckFilterPlayer"></select></label></div><div id="deckGallery" class="deck-gallery"></div></section></div>
+    </section>
+    <section id="adminPanel" class="hidden">
+      <div class="admin-hero"><div><span class="kicker">ÁREA RESTRITA</span><h1>Centro de <em>controle.</em></h1><p>Cadastre resultados, gerencie temporadas e defina quais tribos podem pontuar.</p></div><div class="admin-buttons"><button class="button-outline" id="adminBack">← Voltar ao painel</button><button class="button-outline hidden" id="logoutBtn">Sair da administração</button></div></div>
+      <div id="loginBox" class="login-area panel"><h2>Acesso do administrador</h2><p>O painel público é livre. Para alterar dados, entre com sua conta administrativa individual.</p><form id="loginForm" class="inline-form"><input id="adminUsername" name="username" type="text" placeholder="Usuário" autocomplete="username" required maxlength="32"><input id="adminPassword" name="password" type="password" placeholder="Senha" autocomplete="current-password" required><button type="submit" class="button-primary">Entrar</button></form><p class="muted-note" id="adminConfigMessage"></p></div>
+      <div id="adminContent" class="hidden"><div class="account-chip" id="adminIdentity"></div>
+        <div class="admin-tabs" role="tablist"><button type="button" class="admin-tab active" data-admin-tab="review">Mesas para aprovar <span id="pendingCount" class="count-dot"></span></button><button type="button" class="admin-tab" data-admin-tab="results">Resultados</button><button type="button" class="admin-tab" data-admin-tab="roster">Jogadores e temporadas</button><button type="button" class="admin-tab" data-admin-tab="eligibility">Tribos sem pontuação</button><button type="button" class="admin-tab" data-admin-tab="import">Importar / exportar</button><button type="button" class="admin-tab" data-admin-tab="accounts">Acessos</button></div>
+        <div class="admin-pane" id="pane-review"><section class="panel padded"><span class="kicker">MODERAÇÃO</span><h2>Mesas enviadas pelos jogadores</h2><p>Confira a composição, os decks, a vitória ou os empates. Somente mesas aprovadas entram na classificação.</p><div id="tableReviewList" class="review-list"></div></section></div>
+        <div class="admin-pane hidden" id="pane-results">
+          <div class="admin-layout"><section class="panel padded"><div class="panel-heading"><div><span class="kicker">LANÇAMENTO</span><h2 id="matchFormTitle">Adicionar partida</h2></div></div>
+            <form id="matchForm" class="form-grid">
+              <label>Temporada<select id="mSeason" required></select></label><label>Data<input id="mDate" type="date" required></label><label>Episódio / etapa<input id="mEpisode" maxlength="70" placeholder="Ex.: E1"></label><label>Rodada<select id="mRound"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option></select></label><label>Jogador<select id="mPlayer" required></select></label><label>Tribo<select id="mTribe" required></select></label><label>Resultado<select id="mResult"><option value="V">Vitória (+3)</option><option value="E">Empate (+1)</option><option value="D">Derrota (+0)</option></select></label><label>Deck utilizado (opcional)<select id="mDeck"></select></label>
+              <div class="form-actions"><button type="submit" class="button-primary" id="saveMatch">Salvar resultado</button><button type="button" id="cancelEdit" class="button-outline hidden">Cancelar edição</button></div>
+            </form><p class="form-help">Cada lançamento representa um jogador em uma rodada. Para cadastrar uma mesa inteira, use a aba Enviar mesa, que aceita 3 ou 4 jogadores e valida o vencedor ou os empates.</p>
+          </section><section class="panel padded"><div class="panel-heading"><div><span class="kicker">CONFERÊNCIA</span><h2>Resultados cadastrados</h2></div><input type="search" id="adminMatchSearch" placeholder="Buscar no histórico..." aria-label="Buscar resultados administrativos"></div><div class="admin-match-list" id="adminMatchList"></div></section></div>
+        </div>
+        <div class="admin-pane hidden" id="pane-roster"><div class="three-grid">
+          <section class="panel padded"><span class="kicker">ORGANIZAÇÃO</span><h2>Temporadas</h2><form id="seasonForm" class="stack-form"><input id="newSeason" placeholder="Ex.: S7 · 2026" maxlength="100" required><button class="button-primary">Criar temporada</button></form><div id="seasonManager" class="manager-list"></div></section>
+          <section class="panel padded"><span class="kicker">PARTICIPANTES</span><h2>Jogadores</h2><form id="playerForm" class="stack-form"><input id="newPlayer" placeholder="Nome do jogador" maxlength="100" required><button class="button-primary">Cadastrar jogador</button></form><div id="playerManager" class="manager-list"></div></section>
+          <section class="panel padded"><span class="kicker">METAGAME</span><h2>Tribos</h2><form id="tribeForm" class="stack-form"><input id="newTribe" placeholder="Nome da tribo" maxlength="100" required><button class="button-primary">Cadastrar tribo</button></form><div id="tribeManager" class="manager-list"></div></section>
+        </div></div>
+        <div class="admin-pane hidden" id="pane-eligibility"><section class="panel padded"><span class="kicker">REGRAS POR TEMPORADA</span><h2>Tribos que não pontuam</h2><p>Marque as tribos impedidas de pontuar na temporada selecionada. Os jogos permanecem no histórico; apenas os pontos válidos são zerados. Outras temporadas não serão alteradas.</p><div class="eligibility-head"><label>Temporada<select id="exSeason"></select></label><span class="pill" id="exCount">0 bloqueadas</span></div><div id="exclusionList" class="exclusion-grid"></div></section></div>
+        <div class="admin-pane hidden" id="pane-import"><div class="admin-layout"><section class="panel padded"><span class="kicker">PLANILHAS</span><h2>Importar resultados CSV</h2><p>Compatível com <strong>DATA;PLAYER;TRIBO;R1;R2;R3</strong> ou com uma partida por linha usando <strong>DATA;JOGADOR;TRIBO;RODADA;RESULTADO</strong>. Valores V/E/D ou 3/1/0. Não existe pontuação por combo.</p><form id="importForm" class="stack-form"><label>Temporada padrão<select id="importSeason"></select></label><label>Arquivo CSV<input id="importFile" type="file" accept=".csv,text/csv" required></label><button class="button-primary">Importar arquivo</button></form><div id="importSummary" class="import-summary"></div></section>
+          <section class="panel padded"><span class="kicker">DADOS</span><h2>Exportar e fazer backup</h2><p>Exporte os resultados com pontos válidos e indicador de tribo sem pontuação. Guarde cópias regulares do arquivo <strong>bloodline.db</strong>.</p><div class="download-actions"><button id="downloadCsv" class="button-outline">↓ Baixar resultados CSV</button><button id="downloadJson" class="button-outline">↓ Baixar backup JSON</button></div><div class="helper-panel">O arquivo JSON é uma cópia portátil de referência dos dados. A restauração automatizada não está incluída nesta versão. Para restauração integral, faça backup do banco SQLite.</div></section>
+        </div></div>
+        <div class="admin-pane hidden" id="pane-accounts">
+          <div class="admin-layout">
+            <section class="panel padded" id="ownerAdminSection">
+              <span class="kicker">USUÁRIOS ADMINISTRATIVOS</span><h2>Gerenciar acessos</h2>
+              <p class="muted-note">Somente a conta principal pode cadastrar, redefinir senhas ou desativar outros administradores. Cada pessoa entra com seu próprio usuário.</p>
+              <h3 class="account-section-title">Criar administrador</h3>
+              <form id="createAdminForm" class="stack-form">
+                <label>Nome de usuário<input id="newAdminUsername" autocomplete="off" minlength="3" maxlength="32" placeholder="ex.: organizador2" pattern="[A-Za-z][A-Za-z0-9._-]{2,31}" required></label>
+                <label>Senha inicial<input id="newAdminPassword" type="password" autocomplete="new-password" minlength="10" maxlength="256" required></label>
+                <label>Confirme a senha<input id="newAdminConfirm" type="password" autocomplete="new-password" minlength="10" maxlength="256" required></label>
+                <button type="submit" class="button-primary">Criar acesso</button>
+              </form>
+              <h3 class="account-section-title">Administradores cadastrados</h3>
+              <div id="adminUsersList" class="manager-list"></div>
+              <h3 class="account-section-title">Redefinir senha de outro administrador</h3>
+              <form id="resetAdminForm" class="stack-form">
+                <label>Administrador<select id="resetAdminUser" required></select></label>
+                <label>Nova senha<input id="resetAdminPassword" type="password" autocomplete="new-password" minlength="10" maxlength="256" required></label>
+                <label>Confirme a nova senha<input id="resetAdminConfirm" type="password" autocomplete="new-password" minlength="10" maxlength="256" required></label>
+                <button type="submit" class="button-outline">Redefinir senha</button>
+              </form>
+            </section>
+            <section class="panel padded">
+              <span class="kicker">SEGURANÇA DA CONTA</span><h2>Alterar minha senha</h2>
+              <p class="muted-note">Cada administrador pode alterar a própria senha. O sistema encerra as demais sessões dessa conta.</p>
+              <form id="changeAdminPasswordForm" class="stack-form">
+                <label>Senha atual<input id="myCurrentPassword" type="password" autocomplete="current-password" required></label>
+                <label>Nova senha<input id="myNewPassword" type="password" autocomplete="new-password" minlength="10" maxlength="256" required></label>
+                <label>Confirme a nova senha<input id="myConfirmPassword" type="password" autocomplete="new-password" minlength="10" maxlength="256" required></label>
+                <button type="submit" class="button-primary">Salvar nova senha</button>
+              </form>
+              <div class="helper-panel">As senhas são armazenadas somente como hashes protegidos no banco <strong>bloodline.db</strong>, nunca em texto puro. Guarde um backup seguro do banco.</div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </section>
+    <footer>50TINHA BLOODLINE <span>·</span> DADOS DA LIGA <span>·</span> POWERED BY SEUS RESULTADOS</footer>
+  </main>
+  <div class="modal-overlay hidden" id="detailOverlay" role="presentation"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="detailTitle"><button class="modal-close" id="closeDetail" aria-label="Fechar detalhes">×</button><div id="detailContents"></div></div></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
