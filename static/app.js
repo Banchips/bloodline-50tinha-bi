@@ -14,7 +14,7 @@ function isoFromBrazilianDate(value){
 }
 const resultLabels = {V:'Vitória · 3 pts',E:'Empate · 1 pt',D:'Derrota · 0 pts'};
 const colors = ['#c6ef50','#9e8eff','#69d7e3','#f2b47c','#f18ba8'];
-const state = {public:null, admin:null, season:'all', adminMode:false, loggedIn:false, editing:null, editingDeck:null, tables:[], canManageAdmins:false, admins:[], events:[], selectedEventId:null, editingEventId:null, openEvents:[],selectedSignupEventId:null, inviteReturnTab:'events', currentPanel:null,sessionChecked:false,sessionLoading:false};
+const state = {public:null, admin:null, season:'all', adminMode:false, loggedIn:false, editing:null, editingDeck:null, tables:[], canManageAdmins:false, admins:[], events:[], selectedEventId:null, editingEventId:null, openEvents:[],selectedSignupEventId:null,publishedRounds:[],selectedRoundEventId:null, inviteReturnTab:'events', currentPanel:null,sessionChecked:false,sessionLoading:false};
 let toastTimer;
 function toast(msg,error=false){const t=$('toast');t.textContent=msg;t.classList.toggle('error',error);t.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('visible'),4500)}
 async function api(path,options={}){
@@ -46,6 +46,7 @@ async function loadPublic(chooseDefault=false){
     renderPublic();
   refreshPlayerForms();
   await loadOpenEvents();
+  await loadPublishedRounds();
   }catch(err){toast(err.message,true)}
 }
 function renderPublic(){
@@ -117,12 +118,12 @@ function navigateTo(hash){
   else window.location.hash=hash;
 }
 function showPanel(name){
-  const route={public:'#/ranking',admin:'#/admin/review',table:'#/table',decks:'#/decks',signup:'#/signup',invite:'#/invite/'+(state.selectedEventId||'')};
+  const route={public:'#/ranking',admin:'#/admin/review',rounds:'#/rounds',table:'#/table',decks:'#/decks',signup:'#/signup',invite:'#/invite/'+(state.selectedEventId||'')};
   navigateTo(route[name]||'#/ranking');
 }
 function showPanelNow(name,scroll=true){
   const previous=state.currentPanel;
-  for(const [id,panel] of [['public','publicPanel'],['admin','adminPanel'],['table','tablePanel'],['decks','decksPanel'],['signup','signupPanel'],['invite','invitePanel']]) $(panel).classList.toggle('hidden',id!==name);
+  for(const [id,panel] of [['public','publicPanel'],['admin','adminPanel'],['table','tablePanel'],['decks','decksPanel'],['signup','signupPanel'],['invite','invitePanel'],['rounds','roundsPanel']]) $(panel).classList.toggle('hidden',id!==name);
   state.currentPanel=name;
   state.adminMode=name==='admin';
   if(name!=='public' || !window.location.hash.startsWith('#/player/'))$('detailOverlay').classList.add('hidden');
@@ -131,6 +132,7 @@ function showPanelNow(name,scroll=true){
   if(name==='table'&&previous!=='table'){refreshPlayerForms();loadTables();}
   if(name==='decks'&&previous!=='decks'){refreshPlayerForms();renderDeckGallery();}
   if(name==='signup'&&previous!=='signup')loadOpenEvents(true);
+  if(name==='rounds'&&previous!=='rounds')loadPublishedRounds();
 }
 function applyRoute(scroll=true){
   // Compatibilidade: QR Codes/links da versão 2.2.7 usavam /?inscricao=ID.
@@ -163,6 +165,12 @@ function applyRoute(scroll=true){
     showPanelNow('invite',scroll);
     const ev=state.events.find(e=>e.id===Number(parts[1]));
     if(ev)populateInvite(ev);
+    return;
+  }
+  if(route==='rounds'){
+    if(/^\d+$/.test(parts[1]||''))state.selectedRoundEventId=Number(parts[1]);
+    showPanelNow('rounds',scroll);
+    if(state.publishedRounds.length)renderPublishedRounds();
     return;
   }
   if(route==='signup'){
@@ -518,6 +526,7 @@ function renderEventRoster(){
       }catch(err){toast(err.message,true);await loadLeagueEvents()}
     });
   }
+  renderEventRounds();
   if(!ev)return;
   const tribes=state.admin?.master?.tribes||[];
   $('eventRosterRows').innerHTML=ev.registrations.length?ev.registrations.map(r=>`<tr>
@@ -548,6 +557,44 @@ function renderEventRoster(){
     try{await api(`/api/admin/events/${ev.id}/registrations/${registration.id}`,{method:'DELETE',body:{}});await loadLeagueEvents();toast('Inscrição removida.');}
     catch(err){toast(err.message,true)}
   }));
+}
+// v2.2.9 — pareamentos públicos: somente rodadas publicadas, sem dados financeiros.
+async function loadPublishedRounds(){
+  try{
+    const out=await api('/api/events/rounds');
+    state.publishedRounds=out.events||[];
+    renderPublishedRounds();
+  }catch(err){toast('Não foi possível atualizar os pareamentos: '+err.message,true)}
+}
+function renderPublishedRounds(){
+  const events=state.publishedRounds;
+  if(!events.length){$('roundsEventPicker').innerHTML='';$('roundsPublicContent').innerHTML='<section class="panel padded"><h2>Nenhuma rodada publicada</h2><p>Os pareamentos aparecerão aqui quando a organização publicar uma rodada.</p></section>';return;}
+  if(!events.some(e=>e.id===state.selectedRoundEventId))state.selectedRoundEventId=events[0].id;
+  $('roundsEventPicker').innerHTML=events.map(e=>`<a class="event-picker-item ${state.selectedRoundEventId===e.id?'selected':''}" href="#/rounds/${e.id}"><strong>${safe(e.name)}</strong><small>${safe(fmtDate(e.event_date))} · ${safe(e.season_name)} · ${safe(e.episode)}</small></a>`).join('');
+  const event=events.find(e=>e.id===state.selectedRoundEventId);
+  $('roundsPublicContent').innerHTML=event.rounds.map(r=>`<section class="panel padded"><div class="round-heading"><div><span class="kicker">${safe(event.name)} · ${safe(event.episode)}</span><h2>Rodada ${r.round_no}</h2><p>${safe(fmtDate(event.event_date))} · ${r.tables.length} mesa(s)</p></div><span class="round-status published">● Publicada</span></div><div class="pairing-grid">${r.tables.map(t=>`<article class="pairing-card"><h3>Mesa ${t.table_no}</h3>${t.players.map(p=>`<div class="pairing-person"><strong>${safe(p.player_name)}</strong><small>${safe(p.tribe_name)}</small></div>`).join('')}</article>`).join('')}</div></section>`).join('');
+}
+// Área de criação, ajustes e publicação de pareamentos pela organização.
+function renderEventRounds(){
+  const box=$('eventRoundsContent');if(!box)return;
+  const ev=state.events.find(e=>e.id===state.selectedEventId);
+  if(!ev){box.innerHTML='<p class="muted-note">Selecione um evento para organizar suas rodadas.</p>';return;}
+  const eligible=ev.registrations.filter(r=>r.checkin&&r.paid);
+  const n=eligible.length;
+  const next=Math.max(1,...ev.rounds.map(r=>r.round_no))+ (ev.rounds.length?1:0);
+  box.innerHTML=`<div class="round-controls"><div><strong>${n} jogador(es) apto(s)</strong><p class="muted-note">Critério: check-in + pagamento. Decklist aprovada é um controle independente. Mesas: 3 ou 4 jogadores, sem bye.</p></div><form id="generateRoundForm" class="round-generate-form"><label>Rodada <input id="generateRoundNum" type="number" min="1" max="12" value="${Math.min(next,12)}" required></label><button class="button-primary" type="submit">Gerar pareamentos</button></form></div>
+    <div class="round-list">${ev.rounds.length?ev.rounds.map(r=>`<article class="round-admin-item"><div class="round-heading"><div><h3>Rodada ${r.round_no} <span class="round-status ${r.status==='published'?'published':'draft'}">${r.status==='published'?'● Publicada':'○ Rascunho'}</span></h3><p>${r.tables.length} mesa(s) · ${r.tables.reduce((sum,t)=>sum+t.players.length,0)} jogadores</p></div><div class="round-actions">${r.status==='draft'?`<button class="button-outline" data-round-publish="${r.round_no}">Publicar</button><button class="button-outline" data-round-regenerate="${r.round_no}">Regenerar</button><button class="event-remove" data-round-delete="${r.round_no}">Excluir</button>`:`<a class="button-outline" href="#/rounds/${ev.id}">Ver página pública</a><button class="button-outline" data-round-unpublish="${r.round_no}">Despublicar</button>`}</div></div>
+    <div class="pairing-grid">${r.tables.map(t=>`<article class="pairing-card"><h4>Mesa ${t.table_no}</h4>${t.players.map(p=>`<div class="pairing-person"><strong>${safe(p.player_name)}</strong><small>${safe(p.tribe_name)}</small></div>`).join('')}</article>`).join('')}</div>
+    ${r.status==='draft'&&r.tables.length>1?`<form class="round-swap" data-round-swap="${r.round_no}"><strong>Trocar dois jogadores de mesa</strong><select aria-label="Jogador A" name="first" required><option value="">Primeiro jogador</option>${r.tables.flatMap(t=>t.players.map(p=>`<option value="${p.player_id}">${safe(p.player_name)} · Mesa ${t.table_no}</option>`)).join('')}</select><select name="second" aria-label="Jogador B" required><option value="">Segundo jogador</option>${r.tables.flatMap(t=>t.players.map(p=>`<option value="${p.player_id}">${safe(p.player_name)} · Mesa ${t.table_no}</option>`)).join('')}</select><button class="button-outline" type="submit">Trocar</button></form>`:''}
+    </article>`).join(''):'<p class="muted-note">Nenhuma rodada gerada neste evento.</p>'}</div>`;
+  const endpoint=(n,extra='')=>`/api/admin/events/${ev.id}/rounds/${n}${extra}`;
+  const submit=async(path,method,body,message)=>{try{await api(path,{method,body});await loadLeagueEvents();await loadPublishedRounds();toast(message)}catch(err){toast(err.message,true)}};
+  $('generateRoundForm').addEventListener('submit',e=>{e.preventDefault();const n=Number($('generateRoundNum').value);if(!confirm(`Gerar o pareamento da rodada ${n} com ${eligible.length} jogador(es) aptos?`))return;submit(endpoint(n),'POST',{},'Pareamento gerado em rascunho.')});
+  box.querySelectorAll('[data-round-publish]').forEach(b=>b.addEventListener('click',()=>{const n=Number(b.dataset.roundPublish);if(confirm(`Publicar a rodada ${n} para todos os jogadores?`))submit(endpoint(n),'PUT',{published:true},'Rodada publicada.')}));
+  box.querySelectorAll('[data-round-unpublish]').forEach(b=>b.addEventListener('click',()=>{const n=Number(b.dataset.roundUnpublish);if(confirm(`Retirar a rodada ${n} da visualização pública?`))submit(endpoint(n),'PUT',{published:false},'Rodada despublicada.')}));
+  box.querySelectorAll('[data-round-regenerate]').forEach(b=>b.addEventListener('click',()=>{const n=Number(b.dataset.roundRegenerate);if(confirm(`Apagar o rascunho atual da rodada ${n} e sortear novamente?`))submit(endpoint(n),'POST',{regenerate:true},'Pareamento regenerado.')}));
+  box.querySelectorAll('[data-round-delete]').forEach(b=>b.addEventListener('click',()=>{const n=Number(b.dataset.roundDelete);if(confirm(`Excluir permanentemente o rascunho da rodada ${n}?`))submit(endpoint(n),'DELETE',{},'Rascunho excluído.')}));
+  box.querySelectorAll('[data-round-swap]').forEach(form=>form.addEventListener('submit',e=>{e.preventDefault();const n=Number(form.dataset.roundSwap);submit(endpoint(n,'/swap'),'POST',{player_a:Number(form.elements.first.value),player_b:Number(form.elements.second.value)},'Jogadores trocados de mesa.')}));
 }
 // Inscrições públicas: o site só exibe eventos abertos e nunca libera status administrativos.
 async function loadOpenEvents(redrawSignup=false){

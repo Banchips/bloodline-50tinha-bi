@@ -11,7 +11,7 @@
 <body>
   <header class="topbar">
     <a class="brand" id="homeBrand" href="#/ranking" aria-label="Ir para o ranking"><div class="brand-symbol">B<span>50</span></div><div><strong>BLOODLINE</strong><small>50TINHA · INTELIGÊNCIA DA LIGA</small></div></a>
-    <div class="top-right"><span class="live"><span class="live-dot"></span> Ranking oficial da plataforma</span><a class="admin-access signup-nav hidden" id="signupNav" href="#/signup">✦ Inscrições abertas</a><a class="admin-access" id="tableNav" href="#/table">⚔ Enviar mesa</a><a class="admin-access" id="decksNav" href="#/decks">▤ Decklists</a><a class="admin-access" id="adminNav" href="#/admin/review"><span aria-hidden="true">⚙</span> Administração</a></div>
+    <div class="top-right"><span class="live"><span class="live-dot"></span> Ranking oficial da plataforma</span><a class="admin-access signup-nav hidden" id="signupNav" href="#/signup">✦ Inscrições abertas</a><a class="admin-access" id="roundsNav" href="#/rounds">▦ Rodadas</a><a class="admin-access" id="tableNav" href="#/table">⚔ Enviar mesa</a><a class="admin-access" id="decksNav" href="#/decks">▤ Decklists</a><a class="admin-access" id="adminNav" href="#/admin/review"><span aria-hidden="true">⚙</span> Administração</a></div>
   </header>
   <main class="shell">
     <section id="publicPanel">
@@ -32,6 +32,12 @@
       <section class="panel trend-panel"><div class="panel-heading"><div><span class="kicker">PROGRESSÃO</span><h2>Evolução do Top 5 · Jogador/Tribo</h2><p>As cinco combinações mais bem colocadas, com pontos próprios acumulados por evento.</p></div></div><div id="trendChart" class="trend-chart"></div><div id="trendLegend" class="trend-legend"></div></section>
       <section class="panel matches-panel"><div class="panel-heading"><div><span class="kicker">HISTÓRICO</span><h2>Últimas partidas</h2><p>Resultados de tribos bloqueadas permanecem visíveis, com zero ponto válido.</p></div><input id="matchesSearch" type="search" placeholder="Filtrar partidas..." aria-label="Buscar partidas"></div><div class="table-scroller"><table class="matches-table"><thead><tr><th>DATA</th><th>ETAPA / RODADA</th><th>JOGADOR</th><th>TRIBO</th><th>RESULTADO</th><th>PONTOS VÁLIDOS</th></tr></thead><tbody id="matchRows"></tbody></table></div></section>
       <div class="rule-note" id="ruleNote"></div>
+    </section>
+    <section id="roundsPanel" class="hidden">
+      <div class="admin-hero"><div><span class="kicker">EVENTOS · PAREAMENTOS OFICIAIS</span><h1>Mesas e <em>rodadas.</em></h1><p>Consulte as rodadas publicadas pela organização. Apenas pareamentos oficiais são exibidos.</p></div><a class="button-outline" href="#/ranking">← Voltar ao ranking</a></div>
+      <div id="roundsEventPicker" class="signup-event-picker"></div>
+      <div id="roundsPublicContent" class="round-grid"></div>
+      <div class="helper-panel">Os pareamentos não geram pontos. Os resultados entram no ranking somente quando aprovados pela administração.</div>
     </section>
     <section id="signupPanel" class="hidden">
       <div class="admin-hero"><div><span class="kicker">LIGA BLOODLINE · INSCRIÇÕES</span><h1>Entre na <em>arena.</em></h1><p>Escolha seu jogador, a tribo e, se quiser, uma decklist já cadastrada.</p></div><a class="button-outline backPublic" href="#/ranking">← Voltar ao ranking</a></div>
@@ -94,7 +100,7 @@
                 <label>EP do evento<input id="eventEpisode" maxlength="40" placeholder="Ex.: EP 1" required></label>
                 <div class="form-actions"><button class="button-primary" type="submit" id="eventSave">Criar evento</button><button class="button-outline hidden" type="button" id="eventCancelEdit">Cancelar edição</button></div>
               </form>
-              <div class="helper-panel">Cadastrar eventos e inscrições <strong>não altera o ranking</strong>. Check-in, pagamento e decklist são controles administrativos; os pareamentos serão adicionados em uma próxima etapa.</div>
+              <div class="helper-panel">Cadastrar eventos e inscrições <strong>não altera o ranking</strong>. Check-in, pagamento e decklist são controles administrativos; gere os pareamentos na seção Rodadas abaixo.</div>
             </section>
             <section class="panel padded">
               <span class="kicker">AGENDA</span><h2>Eventos cadastrados</h2>
@@ -112,6 +118,10 @@
               <div class="table-scroller"><table class="event-roster-table"><thead><tr><th>JOGADOR</th><th>TRIBO</th><th>CHECK-IN</th><th>PAGAMENTO</th><th>DECKLIST</th><th>AÇÕES</th></tr></thead><tbody id="eventRosterRows"></tbody></table></div>
               <p class="muted-note">Clique nos indicadores para alternar. ✓ = confirmado; — = pendente ou não aprovado. O status da decklist é marcado pela organização.</p>
             </div>
+          </section>
+          <section class="panel padded event-rounds-panel">
+            <div class="panel-heading"><div><span class="kicker">PAREAMENTO DO EVENTO</span><h2>Rodadas e mesas</h2><p>Somente jogadores com check-in e pagamento confirmados. Gere o rascunho, confira ou troque jogadores de mesa e publique quando estiver pronto.</p></div></div>
+            <div id="eventRoundsContent"><p class="muted-note">Selecione um evento acima para organizar suas rodadas.</p></div>
           </section>
         </div>
         <div class="admin-pane hidden" id="pane-results">
