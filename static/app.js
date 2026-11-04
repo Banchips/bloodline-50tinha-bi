@@ -14,7 +14,7 @@ function isoFromBrazilianDate(value){
 }
 const resultLabels = {V:'Vitória · 3 pts',E:'Empate · 1 pt',D:'Derrota · 0 pts'};
 const colors = ['#c6ef50','#9e8eff','#69d7e3','#f2b47c','#f18ba8'];
-const state = {public:null, admin:null, season:'all', adminMode:false, loggedIn:false, editing:null, editingDeck:null, tables:[], canManageAdmins:false, admins:[], events:[], selectedEventId:null, editingEventId:null, openEvents:[],selectedSignupEventId:null, inviteReturnTab:'events'};
+const state = {public:null, admin:null, season:'all', adminMode:false, loggedIn:false, editing:null, editingDeck:null, tables:[], canManageAdmins:false, admins:[], events:[], selectedEventId:null, editingEventId:null, openEvents:[],selectedSignupEventId:null, inviteReturnTab:'events', currentPanel:null,sessionChecked:false,sessionLoading:false};
 let toastTimer;
 function toast(msg,error=false){const t=$('toast');t.textContent=msg;t.classList.toggle('error',error);t.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('visible'),4500)}
 async function api(path,options={}){
@@ -61,12 +61,12 @@ function renderRanking(){
   const needle=$('rankingSearch').value.trim().toLocaleLowerCase();
   // Cada linha corresponde a UMA combinação jogador + tribo.
   const ranks=d.ranking.filter(p=>(p.name+' '+p.tribe_name).toLocaleLowerCase().includes(needle));
-  $('rankingRows').innerHTML=ranks.length?ranks.map(p=>`<tr data-player="${p.player_id}" data-tribe="${p.tribe_id}" tabindex="0" title="Ver perfil de ${safe(p.name)} e resultados de ${safe(p.tribe_name)}"><td><span class="pos ${p.position===1?'first':p.position===2?'second':p.position===3?'third':''}">${p.position}</span></td><td class="player">${safe(p.name)}</td><td class="num">${intFmt(p.points)}</td><td>${intFmt(p.matches)}</td><td>${p.wins} / ${p.draws} / ${p.losses}</td><td class="num" title="${p.opw_pct===null?`OPW indisponível: ${p.opw_rounds} de ${p.opw_expected_rounds} partidas com mesa identificada`:`OPW calculado com ${p.opw_opponents} adversário(s) em ${p.opw_rounds} partida(s)`}">${p.opw_pct===null?'—':Number(p.opw_pct).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%'}</td><td><div class="tribe-tags"><span class="tag ${p.excluded_matches===p.matches?'off':''}" title="${p.matches} partida(s), ${p.points} ponto(s) válido(s)${p.excluded_matches?`, ${p.excluded_matches} sem pontuação`:''}">${safe(p.tribe_name)}</span></div></td><td class="action-chevron">›</td></tr>`).join(''):'<tr><td colspan="8" class="empty">Nenhuma combinação jogador/tribo encontrada. Cadastre os resultados na administração.</td></tr>';
+  $('rankingRows').innerHTML=ranks.length?ranks.map(p=>`<tr data-player="${p.player_id}" data-tribe="${p.tribe_id}" tabindex="0" title="Ver perfil de ${safe(p.name)} e resultados de ${safe(p.tribe_name)}"><td><span class="pos ${p.position===1?'first':p.position===2?'second':p.position===3?'third':''}">${p.position}</span></td><td class="player"><a class="player-profile-link" href="#/player/${p.player_id}/${p.tribe_id}">${safe(p.name)}</a></td><td class="num">${intFmt(p.points)}</td><td>${intFmt(p.matches)}</td><td>${p.wins} / ${p.draws} / ${p.losses}</td><td class="num" title="${p.opw_pct===null?`OPW indisponível: ${p.opw_rounds} de ${p.opw_expected_rounds} partidas com mesa identificada`:`OPW calculado com ${p.opw_opponents} adversário(s) em ${p.opw_rounds} partida(s)`}">${p.opw_pct===null?'—':Number(p.opw_pct).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%'}</td><td><div class="tribe-tags"><span class="tag ${p.excluded_matches===p.matches?'off':''}" title="${p.matches} partida(s), ${p.points} ponto(s) válido(s)${p.excluded_matches?`, ${p.excluded_matches} sem pontuação`:''}">${safe(p.tribe_name)}</span></div></td><td class="action-chevron"><a href="#/player/${p.player_id}/${p.tribe_id}" aria-label="Abrir perfil de ${safe(p.name)}">›</a></td></tr>`).join(''):'<tr><td colspan="8" class="empty">Nenhuma combinação jogador/tribo encontrada. Cadastre os resultados na administração.</td></tr>';
   $('rankingFoot').textContent=`${ranks.length} entradas jogador/tribo · Desempate: pontos → OPW% → vitórias → partidas válidas. OPW: média dos adversários com piso de 33% (somente mesas completas). “—” indica histórico sem pareamentos suficientes.`;
   $('rankingRows').querySelectorAll('tr[data-player]').forEach(tr=>{
-    const open=()=>showPlayer(Number(tr.dataset.player),Number(tr.dataset.tribe));
-    tr.addEventListener('click',open);
-    tr.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();open()}});
+    const open=()=>navigateTo(`#/player/${tr.dataset.player}/${tr.dataset.tribe}`);
+    tr.addEventListener('click',e=>{if(!e.target.closest('a'))open()});
+    tr.addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&!e.target.closest('a')){e.preventDefault();open()}});
   });
 }
 function showPlayer(id,tribeId=null){
@@ -109,16 +109,76 @@ function renderTrend(){
   $('trendChart').innerHTML=`<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Evolução acumulada de pontos das cinco melhores combinações jogador e tribo">${grid}${labels}${lines}</svg>`;
   $('trendLegend').innerHTML=visible.map((p,i)=>`<span><i class="legend-dot" style="background:${colors[i]}"></i>${safe(p.name)} · ${p.sum} pts</span>`).join('');
 }
+// Navegação por fragmentos: cada tela tem link próprio, suporta botão direito,
+// nova aba, histórico Voltar/Avançar e F5 sem depender de rotas adicionais no servidor.
+const adminTabs = new Set(['review','events','roster','eligibility','import','accounts']);
+function navigateTo(hash){
+  if(window.location.hash===hash)applyRoute(true);
+  else window.location.hash=hash;
+}
 function showPanel(name){
+  const route={public:'#/ranking',admin:'#/admin/review',table:'#/table',decks:'#/decks',signup:'#/signup',invite:'#/invite/'+(state.selectedEventId||'')};
+  navigateTo(route[name]||'#/ranking');
+}
+function showPanelNow(name,scroll=true){
+  const previous=state.currentPanel;
   for(const [id,panel] of [['public','publicPanel'],['admin','adminPanel'],['table','tablePanel'],['decks','decksPanel'],['signup','signupPanel'],['invite','invitePanel']]) $(panel).classList.toggle('hidden',id!==name);
-  state.adminMode=name==='admin';window.scrollTo(0,0);
-  if(name==='admin')refreshAdminSession();
-  if(name==='table'){refreshPlayerForms();loadTables();}
-  if(name==='decks'){refreshPlayerForms();renderDeckGallery();}
-  if(name==='signup'){loadOpenEvents(true);}
+  state.currentPanel=name;
+  state.adminMode=name==='admin';
+  if(name!=='public' || !window.location.hash.startsWith('#/player/'))$('detailOverlay').classList.add('hidden');
+  if(scroll)window.scrollTo(0,0);
+  if((name==='admin'||name==='invite')&&!state.sessionChecked&&!state.sessionLoading)refreshAdminSession();
+  if(name==='table'&&previous!=='table'){refreshPlayerForms();loadTables();}
+  if(name==='decks'&&previous!=='decks'){refreshPlayerForms();renderDeckGallery();}
+  if(name==='signup'&&previous!=='signup')loadOpenEvents(true);
+}
+function applyRoute(scroll=true){
+  // Compatibilidade: QR Codes/links da versão 2.2.7 usavam /?inscricao=ID.
+  if(!window.location.hash){
+    const legacy=Number(new URLSearchParams(window.location.search).get('inscricao'));
+    if(Number.isSafeInteger(legacy)&&legacy>0){
+      window.history.replaceState(null,'',window.location.pathname+'#/signup/'+legacy);
+    }
+  }
+  const parts=(window.location.hash.replace(/^#\/?/,'')||'ranking').split('/');
+  const route=parts[0];
+  if(route==='player' && /^\d+$/.test(parts[1]||'')){
+    showPanelNow('public',scroll);
+    if(state.public){
+      const tribe=/^\d+$/.test(parts[2]||'')?Number(parts[2]):null;
+      showPlayer(Number(parts[1]),tribe);
+    }
+    return;
+  }
+  if(route==='admin'){
+    const tab=adminTabs.has(parts[1])?parts[1]:'review';
+    if(tab==='events' && /^\d+$/.test(parts[2]||''))state.selectedEventId=Number(parts[2]);
+    showPanelNow('admin',scroll);
+    switchAdminTab(tab,false);
+    if(tab==='events' && state.events.length)renderLeagueEvents();
+    return;
+  }
+  if(route==='invite' && /^\d+$/.test(parts[1]||'')){
+    if(state.sessionChecked&&!state.loggedIn){showPanelNow('admin',scroll);return;}
+    showPanelNow('invite',scroll);
+    const ev=state.events.find(e=>e.id===Number(parts[1]));
+    if(ev)populateInvite(ev);
+    return;
+  }
+  if(route==='signup'){
+    if(/^\d+$/.test(parts[1]||''))state.selectedSignupEventId=Number(parts[1]);
+    else state.selectedSignupEventId=null;
+    showPanelNow('signup',scroll);
+    if(state.public)renderSignupForm();
+    return;
+  }
+  if(route==='table'||route==='decks'){showPanelNow(route,scroll);return;}
+  showPanelNow('public',scroll);
 }
 function showAdmin(yes){showPanel(yes?'admin':'public')}
 async function refreshAdminSession(){
+ if(state.sessionLoading)return;
+ state.sessionLoading=true;
  try{
    const d=await api('/api/session');
    state.loggedIn=d.admin;state.canManageAdmins=Boolean(d.can_manage_admins);
@@ -131,6 +191,7 @@ async function refreshAdminSession(){
    $('adminConfigMessage').textContent=d.admin_configured?'':'Conta principal não configurada. Execute o sistema pelo terminal para criar o primeiro usuário.';
    if(d.admin){await loadAdmin();await loadLeagueEvents();if(state.canManageAdmins)await loadAdminUsers()}
  }catch(err){toast(err.message,true)}
+ finally{state.sessionChecked=true;state.sessionLoading=false;applyRoute(false)}
 }
 async function loadAdmin(){
  try{
@@ -226,7 +287,7 @@ function editMatch(id){const m=state.admin.all_matches.find(x=>x.id===id);if(!m)
 function resetMatchForm(){state.editing=null;$('matchForm').reset();$('matchFormTitle').textContent='Adicionar partida';$('saveMatch').textContent='Salvar resultado';$('cancelEdit').classList.add('hidden');$('mSeason').value=state.season!=='all'?state.season:String(state.admin?.master.seasons.at(-1)?.id||'');{const now=new Date(); $('mDate').value=fmtDate(today())}}
 async function deleteMatch(id){if(!confirm(`Excluir a partida #${id}? Essa ação não pode ser desfeita.`))return;try{await api(`/api/matches/${id}`,{method:'DELETE',body:{}});toast('Partida excluída.');if(state.editing===id)resetMatchForm();await reloadAll()}catch(err){toast(err.message,true)}}
 async function reloadAll(){await loadPublic(false);await loadAdmin()}
-function switchAdminTab(tab){document.querySelectorAll('.admin-tab').forEach(e=>e.classList.toggle('active',e.dataset.adminTab===tab));document.querySelectorAll('.admin-pane').forEach(e=>e.classList.toggle('hidden',e.id!=='pane-'+tab))}
+function switchAdminTab(tab,updateUrl=true){if(updateUrl){navigateTo('#/admin/'+tab);return;}document.querySelectorAll('.admin-tab').forEach(e=>{e.classList.toggle('active',e.dataset.adminTab===tab);if(e.dataset.adminTab===tab)e.setAttribute('aria-current','page');else e.removeAttribute('aria-current')});document.querySelectorAll('.admin-pane').forEach(e=>e.classList.toggle('hidden',e.id!=='pane-'+tab))}
 async function downloadEndpoint(path,filename){try{const r=await fetch(path,{credentials:'same-origin'});if(!r.ok)throw new Error('Não autorizado ou exportação indisponível.');const blob=await r.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Arquivo exportado.')}catch(err){toast(err.message,true)}}
 
 function today(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
@@ -386,8 +447,11 @@ async function loadLeagueEvents(){
   try{
     const data=await api('/api/admin/events');
     state.events=data.events||[];
+    const match=window.location.hash.match(/^#\/admin\/events\/(\d+)$/);
+    if(match)state.selectedEventId=Number(match[1]);
     if(!state.events.some(e=>e.id===state.selectedEventId))state.selectedEventId=state.events[0]?.id||null;
     renderLeagueEvents();
+    if(window.location.hash.startsWith('#/invite/'))applyRoute(false);
   }catch(err){toast(err.message,true)}
 }
 function resetEventForm(){
@@ -409,18 +473,12 @@ function refreshEventOptions(){
 function renderLeagueEvents(){
   const events=state.events;
   $('eventList').innerHTML=events.length?events.map(ev=>`<article class="event-list-item ${ev.id===state.selectedEventId?'selected':''}">
-   <button class="event-list-select" type="button" data-event-open="${ev.id}" aria-pressed="${ev.id===state.selectedEventId}">
+   <a class="event-list-select" href="#/admin/events/${ev.id}" data-event-open="${ev.id}" ${ev.id===state.selectedEventId?'aria-current="page"':''}>
     <span class="event-day">${safe(fmtDate(ev.event_date))}</span><strong>${safe(ev.name)}</strong>
     <small>${safe(ev.season_name)} · ${safe(ev.episode)} · ${ev.total_registered} inscrito(s) · ${ev.registrations_open?'INSCRIÇÕES ABERTAS':'INSCRIÇÕES FECHADAS'}</small>
-   </button><button class="event-qr-btn" type="button" data-event-invite="${ev.id}" title="Abrir QR Code e link de inscrição" aria-label="QR Code e link para ${safe(ev.name)}">▦ QR</button><button class="event-edit-btn" type="button" data-event-edit="${ev.id}" aria-label="Editar evento ${safe(ev.name)}">Editar</button><button class="event-delete-btn" type="button" data-event-delete="${ev.id}" aria-label="Excluir evento ${safe(ev.name)}">Excluir</button>
+   </a><a class="event-qr-btn" href="#/invite/${ev.id}" data-event-invite="${ev.id}" title="Abrir QR Code e link de inscrição" aria-label="QR Code e link para ${safe(ev.name)}">▦ QR</a><button class="event-edit-btn" type="button" data-event-edit="${ev.id}" aria-label="Editar evento ${safe(ev.name)}">Editar</button><button class="event-delete-btn" type="button" data-event-delete="${ev.id}" aria-label="Excluir evento ${safe(ev.name)}">Excluir</button>
   </article>`).join(''):'<p class="muted-note">Nenhum evento cadastrado. Crie o primeiro no formulário ao lado.</p>';
-  $('eventList').querySelectorAll('[data-event-open]').forEach(btn=>btn.addEventListener('click',()=>{
-    state.selectedEventId=Number(btn.dataset.eventOpen);renderLeagueEvents();
-  }));
-  $('eventList').querySelectorAll('[data-event-invite]').forEach(btn=>btn.addEventListener('click',()=>{
-    const ev=events.find(e=>e.id===Number(btn.dataset.eventInvite));
-    if(ev)showInvite(ev);
-  }));
+
   $('eventList').querySelectorAll('[data-event-edit]').forEach(btn=>btn.addEventListener('click',()=>{
     const ev=events.find(e=>e.id===Number(btn.dataset.eventEdit));if(!ev)return;
     state.selectedEventId=ev.id;state.editingEventId=ev.id;
@@ -437,6 +495,7 @@ function renderLeagueEvents(){
       await api(`/api/admin/events/${ev.id}`,{method:'DELETE',body:{}});
       if(state.editingEventId===ev.id)resetEventForm();
       if(state.selectedEventId===ev.id)state.selectedEventId=null;
+      if(window.location.hash===`#/admin/events/${ev.id}`)navigateTo('#/admin/events');
       await loadLeagueEvents();toast('Evento e inscrições excluídos.');
     }catch(err){toast(err.message,true)}
   }));
@@ -447,9 +506,8 @@ function renderEventRoster(){
   $('eventRosterTitle').textContent=ev?ev.name:'Lista de jogadores';
   $('eventRosterSubtitle').textContent=ev?`${fmtDate(ev.event_date)} · ${ev.season_name} · ${ev.episode}`:'Cadastre e selecione um evento para inscrever jogadores.';
   $('eventRosterContent').classList.toggle('hidden',!ev);
-  $('eventRosterStats').innerHTML=ev?`<button type="button" class="event-roster-qr" id="eventRosterQR" title="Abrir convite e QR Code">▦ QR / Link</button><span>${ev.total_registered} inscritos</span><span>${ev.total_checkin} check-ins</span><span>${ev.total_paid} pagos</span><span>${ev.total_decklists_ok} decklists OK</span><button type="button" id="toggleEventOpen" class="event-open-switch ${ev.registrations_open?'on':''}" aria-pressed="${Boolean(ev.registrations_open)}">${ev.registrations_open?'● Inscrições abertas':'○ Abrir inscrições'}</button>`:'';
+  $('eventRosterStats').innerHTML=ev?`<a class="event-roster-qr" id="eventRosterQR" href="#/invite/${ev.id}" title="Abrir convite e QR Code">▦ QR / Link</a><span>${ev.total_registered} inscritos</span><span>${ev.total_checkin} check-ins</span><span>${ev.total_paid} pagos</span><span>${ev.total_decklists_ok} decklists OK</span><button type="button" id="toggleEventOpen" class="event-open-switch ${ev.registrations_open?'on':''}" aria-pressed="${Boolean(ev.registrations_open)}">${ev.registrations_open?'● Inscrições abertas':'○ Abrir inscrições'}</button>`:'';
   if(ev){
-    $('eventRosterQR').addEventListener('click',()=>showInvite(ev));
     $('toggleEventOpen').addEventListener('click',async e=>{
       const next=!Boolean(ev.registrations_open);
       if(!confirm(`${next?'Abrir':'Fechar'} as inscrições públicas para ${ev.name}?`))return;
@@ -501,16 +559,12 @@ async function loadOpenEvents(redrawSignup=false){
     $('signupNav').classList.toggle('active-glow',open);
     $('openRegistrationBanner').classList.toggle('hidden',!open);
     if(open){
-      $('openRegistrationBanner').innerHTML=`<div><span class="kicker">INSCRIÇÕES ABERTAS</span><h2>${open===true && state.openEvents.length===1?safe(state.openEvents[0].name):`${state.openEvents.length} eventos com inscrições abertas`}</h2><p>Selecione seu jogador e sua tribo para participar do próximo EP.</p></div><button type="button" class="button-primary" id="goSignupBanner">Inscrever-se agora →</button>`;
-      $('goSignupBanner').addEventListener('click',()=>showPanel('signup'));
+      $('openRegistrationBanner').innerHTML=`<div><span class="kicker">INSCRIÇÕES ABERTAS</span><h2>${open===true && state.openEvents.length===1?safe(state.openEvents[0].name):`${state.openEvents.length} eventos com inscrições abertas`}</h2><p>Selecione seu jogador e sua tribo para participar do próximo EP.</p></div><a class="button-primary" id="goSignupBanner" href="#/signup">Inscrever-se agora →</a>`;
     }
     if(redrawSignup || !$('signupPanel').classList.contains('hidden'))renderSignupForm();
   }catch(err){toast('Não foi possível consultar eventos abertos: '+err.message,true)}
 }
-function openSignupEvent(id){
-  state.selectedSignupEventId=Number(id);
-  showPanel('signup');
-}
+function openSignupEvent(id){navigateTo('#/signup/'+Number(id));}
 function renderSignupForm(){
   const events=state.openEvents||[];
   const requested=Number(new URLSearchParams(window.location.search).get('inscricao'));
@@ -518,10 +572,8 @@ function renderSignupForm(){
     state.selectedSignupEventId=requested||events[0]?.id||null;
   }
   const current=events.find(e=>e.id===state.selectedSignupEventId);
-  $('signupEventPicker').innerHTML=(events.length>1 || (events.length && !events.some(e=>e.id===state.selectedSignupEventId)))?events.map(e=>`<button type="button" data-public-event="${e.id}" class="event-picker-item ${e.id===state.selectedSignupEventId?'selected':''}"><strong>${safe(e.name)}</strong><small>${safe(e.season_name)} · ${safe(e.episode)} · ${fmtDate(e.event_date)}</small></button>`).join(''):'';
-  $('signupEventPicker').querySelectorAll('[data-public-event]').forEach(b=>b.addEventListener('click',()=>{
-    state.selectedSignupEventId=Number(b.dataset.publicEvent);renderSignupForm();
-  }));
+  $('signupEventPicker').innerHTML=(events.length>1 || (events.length && !events.some(e=>e.id===state.selectedSignupEventId)))?events.map(e=>`<a href="#/signup/${e.id}" data-public-event="${e.id}" class="event-picker-item ${e.id===state.selectedSignupEventId?'selected':''}"><strong>${safe(e.name)}</strong><small>${safe(e.season_name)} · ${safe(e.episode)} · ${fmtDate(e.event_date)}</small></a>`).join(''):'';
+
   const enabled=Boolean(current);
   $('signupForm').classList.toggle('hidden',!enabled);
   $('signupEventTitle').textContent=current?current.name:'Inscrições encerradas';
@@ -571,8 +623,12 @@ function updateEventAdminDecks(){
 }
 function showInvite(ev){
   if(!state.loggedIn)return toast('Acesso administrativo necessário.',true);
-  showPanel('invite');
+  navigateTo('#/invite/'+ev.id);
+}
+function populateInvite(ev){
   const link=window.location.origin+'/?inscricao='+encodeURIComponent(ev.id);
+  $('inviteBack').href='#/admin/events/'+ev.id;
+  $('openInviteLink').href=link;
   $('inviteEventTitle').textContent=ev.name;
   $('inviteEventInfo').textContent=`${ev.season_name} · ${ev.episode} · ${fmtDate(ev.event_date)}`;
   $('inviteEventStatus').textContent=ev.registrations_open?'● Inscrições abertas':'○ Inscrições fechadas — abra as inscrições no painel para permitir envios.';
@@ -580,11 +636,11 @@ function showInvite(ev){
   $('inviteQR').src=`/api/admin/events/${ev.id}/qrcode.svg`;
 }
 function bindEvents(){
- $('homeBrand').addEventListener('click',()=>showPanel('public'));$('adminNav').addEventListener('click',()=>showPanel('admin'));$('tableNav').addEventListener('click',()=>showPanel('table'));$('decksNav').addEventListener('click',()=>showPanel('decks'));$('adminBack').addEventListener('click',()=>showPanel('public'));document.querySelectorAll('.backPublic').forEach(b=>b.addEventListener('click',()=>showPanel('public')));
+ window.addEventListener('hashchange',()=>applyRoute(true));
  $('seasonSelect').addEventListener('change',e=>{state.season=e.target.value;loadPublic()});
  $('rankingSearch').addEventListener('input',renderRanking);$('matchesSearch').addEventListener('input',renderMatches);
- $('closeDetail').addEventListener('click',()=>$('detailOverlay').classList.add('hidden'));$('detailOverlay').addEventListener('click',e=>{if(e.target===$('detailOverlay'))$('detailOverlay').classList.add('hidden')});
- document.addEventListener('keydown',e=>{if(e.key==='Escape')$('detailOverlay').classList.add('hidden')});
+ $('closeDetail').addEventListener('click',()=>navigateTo('#/ranking'));$('detailOverlay').addEventListener('click',e=>{if(e.target===$('detailOverlay'))navigateTo('#/ranking')});
+ document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('detailOverlay').classList.contains('hidden'))navigateTo('#/ranking')});
  $('loginForm').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/login',{method:'POST',body:{username:$('adminUsername').value.trim(),password:$('adminPassword').value}});$('adminPassword').value='';toast('Acesso autorizado.');await refreshAdminSession()}catch(err){toast(err.message,true)}});
  $('logoutBtn').addEventListener('click',async()=>{try{await api('/api/logout',{method:'POST',body:{}});state.admin=null;await refreshAdminSession();toast('Sessão encerrada.')}catch(err){toast(err.message,true)}});
  $('eventForm').addEventListener('submit',async e=>{
@@ -612,12 +668,9 @@ function bindEvents(){
    updateSignupDeckHint();
  });
  $('signupForm').addEventListener('submit',submitSignup);
- $('signupNav').addEventListener('click',()=>showPanel('signup'));
- $('inviteBack').addEventListener('click',()=>{showPanel('admin');switchAdminTab('events')});
  $('copyInviteLink').addEventListener('click',async()=>{
     try{await navigator.clipboard.writeText($('inviteLink').value);toast('Link copiado.')}catch{ $('inviteLink').select();toast('Selecione e copie o link.');}
  });
- $('openInviteLink').addEventListener('click',()=>window.open($('inviteLink').value,'_blank','noopener,noreferrer'));
  $('eventRegisterForm').addEventListener('submit',async e=>{
    e.preventDefault();
    if(!state.selectedEventId)return toast('Selecione um evento.',true);
@@ -654,7 +707,6 @@ function bindEvents(){
      $('changeAdminPasswordForm').reset();toast('Senha alterada com sucesso.');
    }catch(err){toast(err.message,true)}
  });
- document.querySelectorAll('.admin-tab').forEach(btn=>btn.addEventListener('click',()=>switchAdminTab(btn.dataset.adminTab)));
  $('exSeason').addEventListener('change',renderExclusions);
  $('mPlayer').addEventListener('change',updateAdminDeckOptions);$('mTribe').addEventListener('change',updateAdminDeckOptions);
  $('adminMatchSearch').addEventListener('input',renderAdminMatches);
@@ -703,8 +755,9 @@ function bindEvents(){
  $('deckForm').addEventListener('submit',submitDeck);
  $('deckCancelBtn').addEventListener('click',resetDeck);
 }
-bindEvents();$('eventDate').value=fmtDate(today());loadPublic(true).then(()=>{
+bindEvents();$('eventDate').value=fmtDate(today());
+applyRoute(false);
+loadPublic(true).then(()=>{
   resetMatchForm();resetTable();repopulateTableSlots();
-  const requested=Number(new URLSearchParams(window.location.search).get('inscricao'));
-  if(requested>0){state.selectedSignupEventId=requested;showPanel('signup');}
+  applyRoute(false);
 });

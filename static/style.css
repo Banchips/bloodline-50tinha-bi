@@ -87,3 +87,13 @@
 .invite-card{max-width:980px;margin:0 auto;display:grid;grid-template-columns:1fr auto;gap:25px;align-items:center}.invite-card h2{font-size:27px;margin:9px 0 15px}.invite-card p{line-height:1.65}.invite-qr{background:#fff;border-radius:15px;padding:17px;text-align:center;display:grid;gap:8px;color:#202832;font-weight:700}.invite-qr img{width:280px;max-width:100%;height:auto;aspect-ratio:1}.invite-link{display:flex;gap:10px;margin:24px 0 13px}.invite-link input{width:100%;min-width:0;background:#101b2e;color:#f0f6ff;border:1px solid #3d506a;padding:13px;border-radius:9px;font-size:12px}.invite-link button{white-space:nowrap}
 @media(max-width:900px){.invite-card{grid-template-columns:1fr}.invite-qr{justify-self:start}.event-list-item{flex-wrap:wrap}.event-list-select{flex-basis:100%}.event-qr-btn,.event-edit-btn,.event-delete-btn{flex:1}.event-qr-btn{border-radius:0}}
 @media(max-width:620px){.registration-banner{flex-direction:column;align-items:stretch}.invite-link{flex-direction:column}.invite-qr{justify-self:stretch}.invite-qr img{margin:auto}.top-right .signup-nav{flex:1 1 100%}.top-right{flex-wrap:wrap}}
+
+/* v2.2.8 — links reais nas telas: abrir em nova aba, copiar link, F5 e Voltar */
+a.brand{color:inherit;text-decoration:none}
+a.admin-access,a.button-outline,a.button-primary,a.admin-tab,a.event-list-select,a.event-qr-btn,a.event-roster-qr,a.event-picker-item{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
+a.admin-tab.active{color:var(--lime)}
+a.event-list-select{display:grid;justify-content:stretch}
+a.event-picker-item{display:flex;flex-direction:column;align-items:flex-start;justify-content:center}
+a.player-profile-link{color:inherit;text-decoration:none;display:inline-block;padding:4px 0}
+a.player-profile-link:hover,a.action-chevron:hover{text-decoration:underline;color:var(--lime)}
+a:focus-visible{outline:2px solid var(--lime);outline-offset:3px}
