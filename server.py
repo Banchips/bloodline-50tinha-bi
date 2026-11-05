@@ -172,6 +172,17 @@ def init_db():
           deck_id INTEGER REFERENCES decks(id) ON DELETE SET NULL,
           UNIQUE(round_id,player_id), UNIQUE(pairing_id,player_id));
         CREATE INDEX IF NOT EXISTS idx_event_rounds_event ON event_rounds(event_id,status);
+        CREATE TABLE IF NOT EXISTS player_accounts (
+          player_id INTEGER PRIMARY KEY REFERENCES players(id) ON DELETE CASCADE,
+          password_salt TEXT NOT NULL, password_hash TEXT NOT NULL,
+          password_iterations INTEGER NOT NULL,
+          active INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS player_sessions (
+          token_hash TEXT PRIMARY KEY,
+          player_id INTEGER NOT NULL REFERENCES player_accounts(player_id) ON DELETE CASCADE,
+          expires_at INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS idx_player_sessions_player ON player_sessions(player_id);
         
         ''')
         # Migração incremental: não recria nem substitui o banco em produção.
@@ -181,6 +192,16 @@ def init_db():
         reg_cols = {r['name'] for r in db.execute('PRAGMA table_info(event_registrations)')}
         if 'deck_id' not in reg_cols:
             db.execute('ALTER TABLE event_registrations ADD COLUMN deck_id INTEGER REFERENCES decks(id) ON DELETE SET NULL')
+        event_columns={r['name'] for r in db.execute('PRAGMA table_info(league_events)')}
+        if 'rounds_share_token' not in event_columns:
+            db.execute('ALTER TABLE league_events ADD COLUMN rounds_share_token TEXT')
+        for row in db.execute("SELECT id FROM league_events WHERE rounds_share_token IS NULL OR rounds_share_token='' ").fetchall():
+            db.execute('UPDATE league_events SET rounds_share_token=? WHERE id=?',
+                       (secrets.token_urlsafe(32),row['id']))
+        table_columns={r['name'] for r in db.execute('PRAGMA table_info(game_tables)')}
+        if 'pairing_id' not in table_columns:
+            db.execute('ALTER TABLE game_tables ADD COLUMN pairing_id INTEGER REFERENCES event_pairings(id) ON DELETE RESTRICT')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_tables_pairing ON game_tables(pairing_id,status)')
         # As sessões antigas da v2.1 não estavam associadas a um usuário.
         # Invalidá-las ao migrar impede que cookies antigos deem acesso irrestrito.
         session_cols = {r['name'] for r in db.execute('PRAGMA table_info(sessions)')}
@@ -974,13 +995,13 @@ def event_status_field(value, field):
 
 def list_league_events(db):
     events = [dict(row) for row in db.execute('''
-        SELECT e.id,e.name,e.event_date,e.season_id,e.episode,e.registrations_open,e.created_at,e.updated_at,
+        SELECT e.id,e.name,e.event_date,e.season_id,e.episode,e.registrations_open,e.rounds_share_token,e.created_at,e.updated_at,
                s.name AS season_name
         FROM league_events e JOIN seasons s ON s.id=e.season_id
         ORDER BY e.event_date DESC,e.id DESC''')]
     registers = [dict(row) for row in db.execute('''
         SELECT er.id,er.event_id,er.player_id,er.tribe_id,er.deck_id,er.checkin,er.paid,er.decklist_ok,
-               er.registered_at,p.name AS player_name,t.name AS tribe_name,
+               er.registered_at,EXISTS(SELECT 1 FROM player_accounts pa WHERE pa.player_id=er.player_id AND pa.active=1) AS has_player_access,p.name AS player_name,t.name AS tribe_name,
                d.name AS deck_name,d.url AS deck_url
         FROM event_registrations er
         JOIN players p ON p.id=er.player_id
@@ -1024,12 +1045,13 @@ def event_round_list(db, event_id, published_only=False):
     return rows
 
 
-def published_event_rounds(db):
+def published_event_rounds(db, token):
     data=[]
     for event in db.execute('''SELECT DISTINCT e.id,e.name,e.event_date,e.episode,s.name season_name
           FROM league_events e JOIN seasons s ON s.id=e.season_id
           JOIN event_rounds r ON r.event_id=e.id AND r.status='published'
-          ORDER BY e.event_date DESC,e.id DESC LIMIT 80'''):
+          WHERE e.rounds_share_token=?
+          ORDER BY e.event_date DESC,e.id DESC LIMIT 80''',(token,)):
         ev=dict(event)
         ev['rounds']=event_round_list(db,ev['id'],True)
         data.append(ev)
@@ -1041,6 +1063,30 @@ def event_eligible(db, event_id):
         FROM event_registrations er JOIN players p ON p.id=er.player_id
         WHERE er.event_id=? AND er.checkin=1 AND er.paid=1
         ORDER BY p.name COLLATE NOCASE''',(event_id,))]
+
+
+def player_assigned_rounds(db, player_id):
+    rounds=[]
+    assignments=db.execute('''SELECT pair.id AS pairing_id,pair.table_no,rd.round_no,
+       e.name AS event_name,e.event_date,e.episode,s.name AS season_name
+       FROM event_pairing_players mine JOIN event_pairings pair ON pair.id=mine.pairing_id
+       JOIN event_rounds rd ON rd.id=pair.round_id AND rd.status='published'
+       JOIN league_events e ON e.id=rd.event_id
+       JOIN seasons s ON s.id=e.season_id
+       JOIN event_registrations reg ON reg.event_id=e.id AND reg.player_id=mine.player_id
+       WHERE mine.player_id=? ORDER BY e.event_date DESC,rd.round_no DESC''',(player_id,)).fetchall()
+    for a in assignments:
+        item=dict(a)
+        item['players']=[dict(p) for p in db.execute('''SELECT pp.player_id,p.name AS player_name,t.name AS tribe_name
+           FROM event_pairing_players pp JOIN players p ON p.id=pp.player_id
+           JOIN tribes t ON t.id=pp.tribe_id
+           WHERE pp.pairing_id=? ORDER BY pp.id''',(a['pairing_id'],))]
+        prev=db.execute('''SELECT status,id FROM game_tables WHERE pairing_id=?
+             ORDER BY id DESC LIMIT 1''',(a['pairing_id'],)).fetchone()
+        item['status']=prev['status'] if prev else 'not_sent'
+        item['submission_id']=prev['id'] if prev else None
+        rounds.append(item)
+    return rounds
 
 
 def event_player_points(db, ev, before_round):
@@ -1127,6 +1173,9 @@ def generate_event_round(db, event_id, round_no, regenerate=False):
     eligible=event_eligible(db,event_id)
     groups=choose_event_pairings(db,ev,round_no,eligible)
     if existing:
+        if db.execute('''SELECT 1 FROM game_tables g JOIN event_pairings p ON p.id=g.pairing_id
+                     WHERE p.round_id=? LIMIT 1''',(existing['id'],)).fetchone():
+            raise UserInputError('Este rascunho possui envios de resultados vinculados. Exclua-os na moderação antes de regenerar.')
         db.execute('DELETE FROM event_rounds WHERE id=?',(existing['id'],))
     rnd_id=db.execute('INSERT INTO event_rounds(event_id,round_no) VALUES (?,?)',(event_id,round_no)).lastrowid
     for index,group in enumerate(groups,1):
@@ -1141,6 +1190,9 @@ def update_event_round_status(db,event_id,round_no,publish):
     rnd=db.execute('SELECT * FROM event_rounds WHERE event_id=? AND round_no=?',(event_id,round_no)).fetchone()
     if not rnd:raise UserInputError('Rodada não encontrada.')
     new='published' if publish else 'draft'
+    if not publish and db.execute('''SELECT 1 FROM game_tables g JOIN event_pairings p ON g.pairing_id=p.id
+                             WHERE p.round_id=? AND g.status IN ('pending','approved')''',(rnd['id'],)).fetchone():
+        raise UserInputError('Rodada com resultado enviado ou aprovado não pode ser despublicada.')
     if rnd['status']==new:raise UserInputError('Rodada já está com esse status.')
     if not publish and db.execute("SELECT 1 FROM event_rounds WHERE event_id=? AND round_no>? AND status='published'",(event_id,round_no)).fetchone():
         raise UserInputError('Despublique primeiro as rodadas posteriores.')
@@ -1166,7 +1218,7 @@ def swap_event_round_players(db,event_id,round_no,first,second):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = 'BloodlineBI/2.2.9'
+    server_version = 'BloodlineBI/2.3.0'
 
     def log_message(self, fmt, *args):
         print('%s - %s' % (self.address_string(), fmt % args))
@@ -1193,13 +1245,13 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
-    def _cookie(self):
+    def _cookie(self, cookie_name='bl_session'):
         c = SimpleCookie()
         try:
             c.load(self.headers.get('Cookie',''))
         except Exception:
             return ''
-        m = c.get('bl_session')
+        m = c.get(cookie_name)
         return m.value if m else ''
 
     def current_admin(self):
@@ -1210,6 +1262,17 @@ class Handler(BaseHTTPRequestHandler):
         with conn_db() as db:
             return db.execute("SELECT a.id,a.username,a.role,a.active FROM sessions s JOIN admins a ON a.id=s.admin_id WHERE s.token_hash=? AND s.expires_at>? AND a.active=1",
                 (hashed, int(time.time()))).fetchone()
+
+    def current_player(self):
+        token=self._cookie('bl_player')
+        if not re.fullmatch('[a-f0-9]{64}',token):return None
+        hashed=hashlib.sha256(token.encode('ascii')).hexdigest()
+        with conn_db() as db:
+            return db.execute('''SELECT p.id,p.name FROM player_sessions ps
+                  JOIN player_accounts pa ON pa.player_id=ps.player_id
+                  JOIN players p ON p.id=pa.player_id
+                  WHERE ps.token_hash=? AND ps.expires_at>? AND pa.active=1''',
+                  (hashed,int(time.time()))).fetchone()
 
     def authed(self):
         return self.current_admin() is not None
@@ -1324,8 +1387,20 @@ class Handler(BaseHTTPRequestHandler):
                 typ = 'text/html; charset=utf-8' if f.suffix=='.html' else ('text/css; charset=utf-8' if f.suffix=='.css' else 'application/javascript; charset=utf-8')
                 return self.respond(200,f.read_bytes(),typ)
             if path == '/api/events/rounds':
+                token=query.get('token',[''])[0]
+                if not re.fullmatch(r'[A-Za-z0-9_-]{35,120}',token):
+                    return self.respond(403,{'error':'Link privado de rodadas obrigatório.'})
                 with conn_db() as db:
-                    return self.respond(200,{'events':published_event_rounds(db)})
+                    return self.respond(200,{'events':published_event_rounds(db,token)})
+            if path == '/api/player/session':
+                player=self.current_player()
+                return self.respond(200, {'player':bool(player), 'id':player['id'] if player else None,
+                                          'name':player['name'] if player else None})
+            if path == '/api/player/my-rounds':
+                player=self.current_player()
+                if player is None:return self.respond(401,{'error':'Entre na área do jogador.'})
+                with conn_db() as db:
+                    return self.respond(200,{'rounds':player_assigned_rounds(db,player['id'])})
             if path == '/api/events/open':
                 with conn_db() as db:
                     return self.respond(200, {'events':public_open_events(db)})
@@ -1415,6 +1490,91 @@ class Handler(BaseHTTPRequestHandler):
     def write(self, method):
         try:
             path = urlparse(self.path).path
+            if path == '/api/player/login' and method == 'POST':
+                obj=self.read_json()
+                ip='player:'+self.client_address[0]
+                now=time.time()
+                with LOGIN_LOCK:
+                    attempts=[t for t in LOGIN_ATTEMPTS.get(ip,[]) if now-t<900]
+                    LOGIN_ATTEMPTS[ip]=attempts
+                    if len(attempts)>=8:return self.respond(429,{'error':'Muitas tentativas. Tente novamente em 15 minutos.'})
+                    attempts.append(now)
+                pid=int_id(obj.get('player_id'),'Jogador')
+                with DB_LOCK,conn_db() as db:
+                    account=db.execute('SELECT * FROM player_accounts WHERE player_id=? AND active=1',(pid,)).fetchone()
+                    if not password_matches(obj.get('password',''),account):
+                        return self.respond(401,{'error':'Jogador ou senha incorretos. Solicite acesso à organização.'})
+                    db.execute('DELETE FROM player_sessions WHERE expires_at<?',(int(time.time()),))
+                    token=secrets.token_hex(32)
+                    db.execute('INSERT INTO player_sessions(token_hash,player_id,expires_at) VALUES(?,?,?)',
+                               (hashlib.sha256(token.encode('ascii')).hexdigest(),pid,int(time.time())+43200))
+                cookie=f'bl_player={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200'
+                if COOKIE_SECURE:cookie+='; Secure'
+                return self.respond(200,{'ok':True},extra={'Set-Cookie':cookie})
+            if path == '/api/player/logout' and method == 'POST':
+                obj=self.read_json()
+                token=self._cookie('bl_player')
+                if re.fullmatch('[a-f0-9]{64}',token):
+                    with DB_LOCK,conn_db() as db:
+                        db.execute('DELETE FROM player_sessions WHERE token_hash=?',
+                                   (hashlib.sha256(token.encode('ascii')).hexdigest(),))
+                cookie='bl_player=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'
+                if COOKIE_SECURE:cookie+='; Secure'
+                return self.respond(200,{'ok':True},extra={'Set-Cookie':cookie})
+            if path == '/api/player/password' and method == 'POST':
+                obj=self.read_json()
+                player=self.current_player()
+                if player is None:return self.respond(401,{'error':'Entre na área do jogador.'})
+                new=validate_password(obj.get('new_password'))
+                with DB_LOCK,conn_db() as db:
+                    account=db.execute('SELECT * FROM player_accounts WHERE player_id=?',(player['id'],)).fetchone()
+                    if not password_matches(obj.get('current_password',''),account):
+                        return self.respond(403,{'error':'Senha atual incorreta.'})
+                    if obj.get('current_password')==new:raise UserInputError('Escolha uma senha diferente.')
+                    salt,digest,iters=password_digest(new)
+                    db.execute('UPDATE player_accounts SET password_salt=?,password_hash=?,password_iterations=? WHERE player_id=?',
+                               (salt,digest,iters,player['id']))
+                    own=hashlib.sha256(self._cookie('bl_player').encode('ascii')).hexdigest()
+                    db.execute('DELETE FROM player_sessions WHERE player_id=? AND token_hash<>?',(player['id'],own))
+                return self.respond(200,{'ok':True})
+            pairing_submit=re.fullmatch(r'/api/player/pairings/(\d+)/result',path)
+            if pairing_submit and method=='POST':
+                obj=self.read_json()
+                player=self.current_player()
+                if player is None:return self.respond(401,{'error':'Entre na área do jogador.'})
+                pairing_id=int(pairing_submit.group(1))
+                with DB_LOCK,conn_db() as db:
+                    pairing=db.execute('''SELECT pair.id,pair.table_no,rd.round_no,e.id AS event_id,
+                            e.season_id,e.event_date,e.episode
+                        FROM event_pairings pair JOIN event_rounds rd ON rd.id=pair.round_id
+                        JOIN league_events e ON e.id=rd.event_id
+                        JOIN event_pairing_players pp ON pp.pairing_id=pair.id
+                        JOIN event_registrations er ON er.event_id=e.id AND er.player_id=pp.player_id
+                        WHERE pair.id=? AND rd.status='published' AND pp.player_id=?''',
+                        (pairing_id,player['id'])).fetchone()
+                    if not pairing:return self.respond(403,{'error':'Você não está inscrito nesta mesa publicada.'})
+                    members=db.execute('''SELECT player_id,tribe_id,deck_id FROM event_pairing_players
+                        WHERE pairing_id=? ORDER BY id''',(pairing_id,)).fetchall()
+                    raw=obj.get('entries')
+                    if not isinstance(raw,list) or len(raw)!=len(members) or any(not isinstance(x,dict) for x in raw):
+                        raise UserInputError('Informe o resultado de cada jogador da sua mesa.')
+                    choices={}
+                    for r in raw:
+                        pid=int_id(r.get('player_id'),'Jogador')
+                        if pid in choices:raise UserInputError('Jogador repetido na mesa.')
+                        choices[pid]=get_result(r.get('result'))
+                    if set(choices)!={m['player_id'] for m in members}:
+                        raise UserInputError('Os resultados devem corresponder à sua mesa publicada.')
+                    header,entries=validate_table(db,{
+                        'season_id':pairing['season_id'],'event_date':pairing['event_date'],
+                        'episode':pairing['episode'],'round_no':pairing['round_no'],
+                        'table_no':pairing['table_no'],'submitted_by':player['id'],
+                        'entries':[{'player_id':m['player_id'],'tribe_id':m['tribe_id'],
+                                    'deck_id':m['deck_id'],'result':choices[m['player_id']]} for m in members]})
+                    tid=create_table(db,header,entries,False)
+                    db.execute('UPDATE game_tables SET pairing_id=? WHERE id=?',(pairing_id,tid))
+                    db.commit()
+                return self.respond(201,{'ok':True,'status':'pending','id':tid})
             if path == '/api/events/register' and method == 'POST':
                 obj = self.read_json()
                 event_id = int_id(obj.get('event_id'), 'Evento')
@@ -1534,15 +1694,11 @@ class Handler(BaseHTTPRequestHandler):
                     db.execute('DELETE FROM admins WHERE id=?',(target_id,))
                 return self.respond(200,{'ok':True})
             if path == '/api/tables' and method == 'POST':
-                with DB_LOCK, conn_db() as db:
+                if not self.require_admin():return
+                with DB_LOCK,conn_db() as db:
                     header,entries=validate_table(db,obj)
-                    is_admin=self.authed()
-                    if not is_admin:
-                        if header[-1] is None:
-                            raise UserInputError('Selecione quem está enviando o resultado.')
-                        throttle_public(self.client_address[0],'tables',12)
-                    table_id=create_table(db,header,entries,is_admin)
-                return self.respond(201,{'ok':True,'id':table_id,'status':'approved' if is_admin else 'pending'})
+                    table_id=create_table(db,header,entries,True)
+                return self.respond(201,{'ok':True,'id':table_id,'status':'approved'})
             if path == '/api/decks' and method == 'POST':
                 with DB_LOCK, conn_db() as db:
                     vals=validated_deck(db,obj)
@@ -1578,9 +1734,28 @@ class Handler(BaseHTTPRequestHandler):
                     if db.execute('SELECT 1 FROM league_events WHERE season_id=? AND episode=? COLLATE NOCASE',
                                   (values[2],values[3])).fetchone():
                         raise UserInputError('Já existe um evento com esse EP nesta temporada.')
-                    cur = db.execute('INSERT INTO league_events(event_date,name,season_id,episode) VALUES(?,?,?,?)', values)
+                    cur = db.execute('INSERT INTO league_events(event_date,name,season_id,episode,rounds_share_token) VALUES(?,?,?,?,?)', (*values,secrets.token_urlsafe(32)))
                     db.commit()
                     return self.respond(201, {'ok':True,'id':cur.lastrowid})
+                access_route=re.fullmatch(r'/api/admin/events/(\d+)/registrations/(\d+)/access',path)
+                if access_route and method=='POST':
+                    event_id,reg_id=map(int,access_route.groups())
+                    registration=db.execute('''SELECT er.player_id,p.name FROM event_registrations er
+                              JOIN players p ON p.id=er.player_id WHERE er.event_id=? AND er.id=?''',
+                              (event_id,reg_id)).fetchone()
+                    if not registration:raise UserInputError('Inscrição não encontrada.')
+                    new_password=secrets.token_urlsafe(16)
+                    salt,digest,iters=password_digest(new_password)
+                    db.execute('''INSERT INTO player_accounts(player_id,password_salt,password_hash,password_iterations)
+                      VALUES(?,?,?,?) ON CONFLICT(player_id) DO UPDATE SET
+                      password_salt=excluded.password_salt,password_hash=excluded.password_hash,
+                      password_iterations=excluded.password_iterations,active=1''',
+                      (registration['player_id'],salt,digest,iters))
+                    db.execute('DELETE FROM player_sessions WHERE player_id=?',(registration['player_id'],))
+                    db.commit()
+                    return self.respond(200,{'ok':True,'name':registration['name'],
+                                            'player_id':registration['player_id'],
+                                            'initial_password':new_password})
                 round_route=re.fullmatch(r'/api/admin/events/(\d+)/rounds/(\d+)',path)
                 if round_route and method in ('POST','PUT','DELETE'):
                     event_id=int(round_route.group(1));round_no=int(round_route.group(2))
@@ -1597,6 +1772,9 @@ class Handler(BaseHTTPRequestHandler):
                     rnd=db.execute('SELECT * FROM event_rounds WHERE event_id=? AND round_no=?',(event_id,round_no)).fetchone()
                     if not rnd:raise UserInputError('Rodada não encontrada.')
                     if rnd['status']=='published':raise UserInputError('Despublique antes de excluir a rodada.')
+                    if db.execute('''SELECT 1 FROM game_tables g JOIN event_pairings p ON g.pairing_id=p.id
+                                  WHERE p.round_id=? LIMIT 1''',(rnd['id'],)).fetchone():
+                        raise UserInputError('Esta rodada tem envios de resultados vinculados. Preserve o histórico.')
                     db.execute('DELETE FROM event_rounds WHERE id=?',(rnd['id'],))
                     db.commit()
                     return self.respond(200,{'ok':True})
@@ -1648,6 +1826,7 @@ class Handler(BaseHTTPRequestHandler):
                     # As inscrições pertencem exclusivamente ao evento; o
                     # ON DELETE CASCADE as elimina, sem apagar os jogadores.
                     db.execute('DELETE FROM league_events WHERE id=?',(event_id,))
+                    db.commit()
                     return self.respond(200,{'ok':True})
                 register_route = re.fullmatch(r'/api/admin/events/(\d+)/registrations',path)
                 if register_route and method == 'POST':
@@ -1703,12 +1882,14 @@ class Handler(BaseHTTPRequestHandler):
                     if obj.get('status') not in ('approved','rejected'):
                         raise UserInputError('Status deve ser approved ou rejected.')
                     review_table(db,table_id,approved,txt(obj.get('note'),'Observação',350,False))
+                    db.commit()
                     return self.respond(200,{'ok':True})
                 if table_match and method=='DELETE':
                     table_id=int(table_match.group(1))
                     if not exists(db,'game_tables',table_id):raise UserInputError('Mesa inexistente.')
                     db.execute('DELETE FROM matches WHERE table_id=?',(table_id,))
                     db.execute('DELETE FROM game_tables WHERE id=?',(table_id,))
+                    db.commit()
                     return self.respond(200,{'ok':True})
                 if deck_match and method=='DELETE':
                     did=int(deck_match.group(1))

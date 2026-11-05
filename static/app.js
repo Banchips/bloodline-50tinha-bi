@@ -14,7 +14,7 @@ function isoFromBrazilianDate(value){
 }
 const resultLabels = {V:'Vitória · 3 pts',E:'Empate · 1 pt',D:'Derrota · 0 pts'};
 const colors = ['#c6ef50','#9e8eff','#69d7e3','#f2b47c','#f18ba8'];
-const state = {public:null, admin:null, season:'all', adminMode:false, loggedIn:false, editing:null, editingDeck:null, tables:[], canManageAdmins:false, admins:[], events:[], selectedEventId:null, editingEventId:null, openEvents:[],selectedSignupEventId:null,publishedRounds:[],selectedRoundEventId:null, inviteReturnTab:'events', currentPanel:null,sessionChecked:false,sessionLoading:false};
+const state = {public:null, admin:null, season:'all', adminMode:false, loggedIn:false, editing:null, editingDeck:null, tables:[], canManageAdmins:false, admins:[], events:[], selectedEventId:null, editingEventId:null, openEvents:[],selectedSignupEventId:null,publishedRounds:[],selectedRoundEventId:null, inviteReturnTab:'events', currentPanel:null,sessionChecked:false,sessionLoading:false,playerSession:null,playerRounds:[],roundShareToken:null};
 let toastTimer;
 function toast(msg,error=false){const t=$('toast');t.textContent=msg;t.classList.toggle('error',error);t.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('visible'),4500)}
 async function api(path,options={}){
@@ -46,7 +46,6 @@ async function loadPublic(chooseDefault=false){
     renderPublic();
   refreshPlayerForms();
   await loadOpenEvents();
-  await loadPublishedRounds();
   }catch(err){toast(err.message,true)}
 }
 function renderPublic(){
@@ -118,12 +117,12 @@ function navigateTo(hash){
   else window.location.hash=hash;
 }
 function showPanel(name){
-  const route={public:'#/ranking',admin:'#/admin/review',rounds:'#/rounds',table:'#/table',decks:'#/decks',signup:'#/signup',invite:'#/invite/'+(state.selectedEventId||'')};
+  const route={public:'#/ranking',admin:'#/admin/review',table:'#/my-area',playerArea:'#/my-area',decks:'#/decks',signup:'#/signup',invite:'#/invite/'+(state.selectedEventId||'')};
   navigateTo(route[name]||'#/ranking');
 }
 function showPanelNow(name,scroll=true){
   const previous=state.currentPanel;
-  for(const [id,panel] of [['public','publicPanel'],['admin','adminPanel'],['table','tablePanel'],['decks','decksPanel'],['signup','signupPanel'],['invite','invitePanel'],['rounds','roundsPanel']]) $(panel).classList.toggle('hidden',id!==name);
+  for(const [id,panel] of [['public','publicPanel'],['admin','adminPanel'],['table','tablePanel'],['decks','decksPanel'],['signup','signupPanel'],['invite','invitePanel'],['rounds','roundsPanel'],['playerArea','playerAreaPanel']]) $(panel).classList.toggle('hidden',id!==name);
   state.currentPanel=name;
   state.adminMode=name==='admin';
   if(name!=='public' || !window.location.hash.startsWith('#/player/'))$('detailOverlay').classList.add('hidden');
@@ -132,7 +131,8 @@ function showPanelNow(name,scroll=true){
   if(name==='table'&&previous!=='table'){refreshPlayerForms();loadTables();}
   if(name==='decks'&&previous!=='decks'){refreshPlayerForms();renderDeckGallery();}
   if(name==='signup'&&previous!=='signup')loadOpenEvents(true);
-  if(name==='rounds'&&previous!=='rounds')loadPublishedRounds();
+  if(name==='rounds'&&previous!=='rounds')loadPublishedRounds(state.roundShareToken);
+  if(name==='playerArea'&&previous!=='playerArea')refreshPlayerSession();
 }
 function applyRoute(scroll=true){
   // Compatibilidade: QR Codes/links da versão 2.2.7 usavam /?inscricao=ID.
@@ -168,9 +168,15 @@ function applyRoute(scroll=true){
     return;
   }
   if(route==='rounds'){
-    if(/^\d+$/.test(parts[1]||''))state.selectedRoundEventId=Number(parts[1]);
+    const token=parts[1]||'';
+    state.roundShareToken=/^[A-Za-z0-9_-]{35,120}$/.test(token)?token:null;
     showPanelNow('rounds',scroll);
-    if(state.publishedRounds.length)renderPublishedRounds();
+    loadPublishedRounds(state.roundShareToken);
+    return;
+  }
+  if(route==='my-area'||route==='table'){
+    if(route==='table'){navigateTo('#/my-area');return;}
+    showPanelNow('playerArea',scroll);
     return;
   }
   if(route==='signup'){
@@ -180,7 +186,7 @@ function applyRoute(scroll=true){
     if(state.public)renderSignupForm();
     return;
   }
-  if(route==='table'||route==='decks'){showPanelNow(route,scroll);return;}
+  if(route==='decks'){showPanelNow(route,scroll);return;}
   showPanelNow('public',scroll);
 }
 function showAdmin(yes){showPanel(yes?'admin':'public')}
@@ -514,7 +520,7 @@ function renderEventRoster(){
   $('eventRosterTitle').textContent=ev?ev.name:'Lista de jogadores';
   $('eventRosterSubtitle').textContent=ev?`${fmtDate(ev.event_date)} · ${ev.season_name} · ${ev.episode}`:'Cadastre e selecione um evento para inscrever jogadores.';
   $('eventRosterContent').classList.toggle('hidden',!ev);
-  $('eventRosterStats').innerHTML=ev?`<a class="event-roster-qr" id="eventRosterQR" href="#/invite/${ev.id}" title="Abrir convite e QR Code">▦ QR / Link</a><span>${ev.total_registered} inscritos</span><span>${ev.total_checkin} check-ins</span><span>${ev.total_paid} pagos</span><span>${ev.total_decklists_ok} decklists OK</span><button type="button" id="toggleEventOpen" class="event-open-switch ${ev.registrations_open?'on':''}" aria-pressed="${Boolean(ev.registrations_open)}">${ev.registrations_open?'● Inscrições abertas':'○ Abrir inscrições'}</button>`:'';
+  $('eventRosterStats').innerHTML=ev?`<a class="event-roster-qr" id="eventRosterQR" href="#/invite/${ev.id}" title="Abrir convite e QR Code">▦ QR / Link</a><a class="event-roster-qr" href="#/rounds/${safe(ev.rounds_share_token)}" target="_blank" rel="noopener noreferrer" title="Link privado para as rodadas">🔗 Rodadas (link privado)</a><span>${ev.total_registered} inscritos</span><span>${ev.total_checkin} check-ins</span><span>${ev.total_paid} pagos</span><span>${ev.total_decklists_ok} decklists OK</span><button type="button" id="toggleEventOpen" class="event-open-switch ${ev.registrations_open?'on':''}" aria-pressed="${Boolean(ev.registrations_open)}">${ev.registrations_open?'● Inscrições abertas':'○ Abrir inscrições'}</button>`:'';
   if(ev){
     $('toggleEventOpen').addEventListener('click',async e=>{
       const next=!Boolean(ev.registrations_open);
@@ -535,8 +541,24 @@ function renderEventRoster(){
     <td><button type="button" class="event-toggle ${r.checkin?'on':''}" data-event-toggle="${r.id}" data-field="checkin" aria-pressed="${Boolean(r.checkin)}" title="${r.checkin?'Check-in confirmado':'Check-in pendente'}"><span aria-hidden="true">${r.checkin?'✓':'○'}</span><small>${r.checkin?'Feito':'Pendente'}</small></button></td>
     <td><button type="button" class="event-toggle ${r.paid?'on':''}" data-event-toggle="${r.id}" data-field="paid" aria-pressed="${Boolean(r.paid)}" title="${r.paid?'Pagamento confirmado':'Pagamento pendente'}"><span aria-hidden="true">${r.paid?'✓':'○'}</span><small>${r.paid?'Pago':'Pendente'}</small></button></td>
     <td><button type="button" class="event-toggle ${r.decklist_ok?'on':''}" data-event-toggle="${r.id}" data-field="decklist_ok" aria-pressed="${Boolean(r.decklist_ok)}" title="${r.decklist_ok?'Decklist aprovada':'Decklist ainda não aprovada'}"><span aria-hidden="true">${r.decklist_ok?'✓':'✕'}</span><small>${r.decklist_ok?'OK':'Não'}</small></button></td>
+    <td><button type="button" class="button-outline" data-player-access="${r.id}">${r.has_player_access?'Redefinir senha':'Criar login'}</button></td>
     <td><button type="button" class="event-remove" data-event-remove="${r.id}" aria-label="Remover ${safe(r.player_name)} deste evento">Remover</button></td>
-  </tr>`).join(''):'<tr><td class="empty" colspan="6">Nenhum jogador inscrito neste evento.</td></tr>';
+  </tr>`).join(''):'<tr><td class="empty" colspan="7">Nenhum jogador inscrito neste evento.</td></tr>';
+  $('eventRosterRows').querySelectorAll('[data-player-access]').forEach(btn=>btn.addEventListener('click',async()=>{
+    const reg=ev.registrations.find(r=>r.id===Number(btn.dataset.playerAccess));
+    if(!reg)return;
+    if(!confirm(`${reg.has_player_access?'Redefinir':'Criar'} a senha de ${reg.player_name}? Caso já exista, a senha antiga e as sessões serão invalidadas.`))return;
+    btn.disabled=true;
+    try{
+      const data=await api(`/api/admin/events/${ev.id}/registrations/${reg.id}/access`,{method:'POST',body:{}});
+      const text=`Jogador: ${data.name}\nSenha temporária: ${data.initial_password}\nSite: ${location.origin}/#/my-area`;
+      $('playerAccessNotice').innerHTML=`<strong>Acesso de ${safe(data.name)} — copie e entregue somente ao jogador</strong><p><code>${safe(data.initial_password)}</code></p><button type="button" class="button-outline" id="copyPlayerAccess">Copiar dados de acesso</button> <button type="button" class="button-outline" id="hidePlayerAccess">Ocultar senha</button>`;
+      $('playerAccessNotice').classList.remove('hidden');
+      $('copyPlayerAccess').addEventListener('click',()=>navigator.clipboard.writeText(text).then(()=>toast('Dados copiados. Envie em privado.')).catch(()=>toast('Selecione a senha e copie manualmente.',true)));
+      $('hidePlayerAccess').addEventListener('click',()=>{$('playerAccessNotice').classList.add('hidden');$('playerAccessNotice').textContent='';});
+      await loadLeagueEvents();toast('Acesso gerado. Compartilhe a senha em privado.');
+    }catch(err){toast(err.message,true);btn.disabled=false}
+  }));
   $('eventRosterRows').querySelectorAll('[data-event-toggle]').forEach(btn=>btn.addEventListener('click',async()=>{
     const registration=ev.registrations.find(x=>x.id===Number(btn.dataset.eventToggle));if(!registration)return;
     const field=btn.dataset.field;
@@ -559,18 +581,20 @@ function renderEventRoster(){
   }));
 }
 // v2.2.9 — pareamentos públicos: somente rodadas publicadas, sem dados financeiros.
-async function loadPublishedRounds(){
+async function loadPublishedRounds(token=state.roundShareToken){
+  if(!token){state.publishedRounds=[];renderPublishedRounds();return;}
   try{
-    const out=await api('/api/events/rounds');
+    const out=await api('/api/events/rounds?token='+encodeURIComponent(token));
+    if(state.roundShareToken!==token)return;
     state.publishedRounds=out.events||[];
     renderPublishedRounds();
-  }catch(err){toast('Não foi possível atualizar os pareamentos: '+err.message,true)}
+  }catch(err){state.publishedRounds=[];renderPublishedRounds();toast('Link privado inválido ou expirado: '+err.message,true)}
 }
 function renderPublishedRounds(){
   const events=state.publishedRounds;
-  if(!events.length){$('roundsEventPicker').innerHTML='';$('roundsPublicContent').innerHTML='<section class="panel padded"><h2>Nenhuma rodada publicada</h2><p>Os pareamentos aparecerão aqui quando a organização publicar uma rodada.</p></section>';return;}
+  if(!events.length){$('roundsEventPicker').innerHTML='';$('roundsPublicContent').innerHTML='<section class="panel padded"><h2>Pareamentos privados</h2><p>Você precisa do link enviado pela organização, e as rodadas precisam estar publicadas.</p></section>';return;}
   if(!events.some(e=>e.id===state.selectedRoundEventId))state.selectedRoundEventId=events[0].id;
-  $('roundsEventPicker').innerHTML=events.map(e=>`<a class="event-picker-item ${state.selectedRoundEventId===e.id?'selected':''}" href="#/rounds/${e.id}"><strong>${safe(e.name)}</strong><small>${safe(fmtDate(e.event_date))} · ${safe(e.season_name)} · ${safe(e.episode)}</small></a>`).join('');
+  $('roundsEventPicker').innerHTML=events.map(e=>`<a class="event-picker-item ${state.selectedRoundEventId===e.id?'selected':''}" href="#/rounds/${safe(state.roundShareToken)}"><strong>${safe(e.name)}</strong><small>${safe(fmtDate(e.event_date))} · ${safe(e.season_name)} · ${safe(e.episode)}</small></a>`).join('');
   const event=events.find(e=>e.id===state.selectedRoundEventId);
   $('roundsPublicContent').innerHTML=event.rounds.map(r=>`<section class="panel padded"><div class="round-heading"><div><span class="kicker">${safe(event.name)} · ${safe(event.episode)}</span><h2>Rodada ${r.round_no}</h2><p>${safe(fmtDate(event.event_date))} · ${r.tables.length} mesa(s)</p></div><span class="round-status published">● Publicada</span></div><div class="pairing-grid">${r.tables.map(t=>`<article class="pairing-card"><h3>Mesa ${t.table_no}</h3>${t.players.map(p=>`<div class="pairing-person"><strong>${safe(p.player_name)}</strong><small>${safe(p.tribe_name)}</small></div>`).join('')}</article>`).join('')}</div></section>`).join('');
 }
@@ -583,7 +607,7 @@ function renderEventRounds(){
   const n=eligible.length;
   const next=Math.max(1,...ev.rounds.map(r=>r.round_no))+ (ev.rounds.length?1:0);
   box.innerHTML=`<div class="round-controls"><div><strong>${n} jogador(es) apto(s)</strong><p class="muted-note">Critério: check-in + pagamento. Decklist aprovada é um controle independente. Mesas: 3 ou 4 jogadores, sem bye.</p></div><form id="generateRoundForm" class="round-generate-form"><label>Rodada <input id="generateRoundNum" type="number" min="1" max="12" value="${Math.min(next,12)}" required></label><button class="button-primary" type="submit">Gerar pareamentos</button></form></div>
-    <div class="round-list">${ev.rounds.length?ev.rounds.map(r=>`<article class="round-admin-item"><div class="round-heading"><div><h3>Rodada ${r.round_no} <span class="round-status ${r.status==='published'?'published':'draft'}">${r.status==='published'?'● Publicada':'○ Rascunho'}</span></h3><p>${r.tables.length} mesa(s) · ${r.tables.reduce((sum,t)=>sum+t.players.length,0)} jogadores</p></div><div class="round-actions">${r.status==='draft'?`<button class="button-outline" data-round-publish="${r.round_no}">Publicar</button><button class="button-outline" data-round-regenerate="${r.round_no}">Regenerar</button><button class="event-remove" data-round-delete="${r.round_no}">Excluir</button>`:`<a class="button-outline" href="#/rounds/${ev.id}">Ver página pública</a><button class="button-outline" data-round-unpublish="${r.round_no}">Despublicar</button>`}</div></div>
+    <div class="round-list">${ev.rounds.length?ev.rounds.map(r=>`<article class="round-admin-item"><div class="round-heading"><div><h3>Rodada ${r.round_no} <span class="round-status ${r.status==='published'?'published':'draft'}">${r.status==='published'?'● Publicada':'○ Rascunho'}</span></h3><p>${r.tables.length} mesa(s) · ${r.tables.reduce((sum,t)=>sum+t.players.length,0)} jogadores</p></div><div class="round-actions">${r.status==='draft'?`<button class="button-outline" data-round-publish="${r.round_no}">Publicar</button><button class="button-outline" data-round-regenerate="${r.round_no}">Regenerar</button><button class="event-remove" data-round-delete="${r.round_no}">Excluir</button>`:`<a class="button-outline" href="#/rounds/${safe(ev.rounds_share_token)}" target="_blank" rel="noopener noreferrer">Abrir link privado</a><button class="button-outline" data-round-unpublish="${r.round_no}">Despublicar</button>`}</div></div>
     <div class="pairing-grid">${r.tables.map(t=>`<article class="pairing-card"><h4>Mesa ${t.table_no}</h4>${t.players.map(p=>`<div class="pairing-person"><strong>${safe(p.player_name)}</strong><small>${safe(p.tribe_name)}</small></div>`).join('')}</article>`).join('')}</div>
     ${r.status==='draft'&&r.tables.length>1?`<form class="round-swap" data-round-swap="${r.round_no}"><strong>Trocar dois jogadores de mesa</strong><select aria-label="Jogador A" name="first" required><option value="">Primeiro jogador</option>${r.tables.flatMap(t=>t.players.map(p=>`<option value="${p.player_id}">${safe(p.player_name)} · Mesa ${t.table_no}</option>`)).join('')}</select><select name="second" aria-label="Jogador B" required><option value="">Segundo jogador</option>${r.tables.flatMap(t=>t.players.map(p=>`<option value="${p.player_id}">${safe(p.player_name)} · Mesa ${t.table_no}</option>`)).join('')}</select><button class="button-outline" type="submit">Trocar</button></form>`:''}
     </article>`).join(''):'<p class="muted-note">Nenhuma rodada gerada neste evento.</p>'}</div>`;
@@ -658,6 +682,8 @@ async function submitSignup(e){
     $('signupMessage').textContent=`✓ Inscrição recebida para ${ev.name}! Procure a organização para confirmar check-in, pagamento e aprovação da decklist.`;
     toast('Inscrição enviada com sucesso!');
     $('signupPlayer').value='';$('signupTribe').value='';updateSignupDecks();await loadOpenEvents();
+    toast('Inscrição recebida. Para acessar a mesa, peça sua senha à organização.');
+    navigateTo('#/my-area');
   }catch(err){ $('signupMessage').textContent='Não foi possível inscrever: '+err.message;toast(err.message,true); }
   finally{btn.disabled=false}
 }
@@ -682,12 +708,58 @@ function populateInvite(ev){
   $('inviteLink').value=link;
   $('inviteQR').src=`/api/admin/events/${ev.id}/qrcode.svg`;
 }
+// Área autenticada do jogador. O servidor vincula o envio ao pareamento real.
+async function refreshPlayerSession(){
+  try{
+    const current=await api('/api/player/session');state.playerSession=current.player?current:null;
+    $('playerLoginWrap').classList.toggle('hidden',Boolean(current.player));
+    $('playerDashboard').classList.toggle('hidden',!current.player);
+    $('playerLoginId').innerHTML=selectOptions(getRegisteredPlayers(),$('playerLoginId').value,'Selecione seu jogador');
+    if(current.player){$('playerIdentity').textContent=current.name;await refreshPlayerRounds();}
+    else {$('playerRoundsList').innerHTML='';state.playerRounds=[];}
+  }catch(err){toast(err.message,true)}
+}
+async function refreshPlayerRounds(){
+  if(!state.playerSession)return;
+  try{const data=await api('/api/player/my-rounds');state.playerRounds=data.rounds||[];renderMyRounds();}
+  catch(err){toast(err.message,true)}
+}
+function renderMyRounds(){
+  const arr=state.playerRounds;
+  $('playerRoundsList').innerHTML=arr.length?arr.map(round=>{
+    const status=round.status==='pending'?'Enviado · aguardando aprovação':round.status==='approved'?'Resultado aprovado':round.status==='rejected'?'Resultado rejeitado · pode reenviar':'Aguardando lançamento';
+    const locked=['pending','approved'].includes(round.status);
+    return `<section class="panel padded player-round-item"><span class="kicker">${safe(round.season_name)} · ${safe(round.episode)} · ${fmtDate(round.event_date)}</span><div class="round-heading"><div><h2>${safe(round.event_name)} — R${round.round_no}, Mesa ${round.table_no}</h2><p>${status}</p></div><span class="round-status ${locked?'published':'draft'}">${locked?'●':'○'} ${status}</span></div>
+      <form class="player-result-form" data-pairing="${round.pairing_id}">
+      <div class="player-result-grid">${round.players.map((p,i)=>`<label class="player-result-person ${p.player_id===state.playerSession.id?'myself':''}"><strong>${safe(p.player_name)}${p.player_id===state.playerSession.id?' (você)':''}</strong><small>${safe(p.tribe_name)}</small><select name="result-${p.player_id}" data-player="${p.player_id}" required ${locked?'disabled':''}><option value="">Escolha o resultado</option><option value="D">Derrota · 0 pontos</option><option value="V">Vitória · 3 pontos</option><option value="E">Empate · 1 ponto</option></select></label>`).join('')}</div>
+      <p class="muted-note">Marque um vencedor e os demais derrotados, ou empate de 2 a 4 participantes. O resultado só entra no ranking após aprovação.</p>
+      <div class="form-actions">${locked?'<span class="muted-note">Envio bloqueado: já existe um resultado pendente ou aprovado.</span>':'<button class="button-primary" type="submit">Enviar resultado desta mesa</button>'}</div></form></section>`;
+  }).join(''):'<section class="panel padded"><h2>Nenhuma mesa atribuída</h2><p>Você precisa estar inscrito em um evento com check-in e pagamento confirmados, e a rodada precisa estar publicada pela organização.</p></section>';
+  $('playerRoundsList').querySelectorAll('.player-result-form').forEach(form=>form.addEventListener('submit',async e=>{
+    e.preventDefault();const pairing=Number(form.dataset.pairing);
+    const entries=[...form.querySelectorAll('select[data-player]')].map(select=>({player_id:Number(select.dataset.player),result:select.value}));
+    if(!confirm('Confirmar o envio do resultado desta mesa? Depois, apenas a administração poderá aprovar ou rejeitar.'))return;
+    try{await api(`/api/player/pairings/${pairing}/result`,{method:'POST',body:{entries}});toast('Resultado recebido e aguardando aprovação.');await refreshPlayerRounds();}
+    catch(err){toast(err.message,true)}
+  }));
+}
 function bindEvents(){
  window.addEventListener('hashchange',()=>applyRoute(true));
  $('seasonSelect').addEventListener('change',e=>{state.season=e.target.value;loadPublic()});
  $('rankingSearch').addEventListener('input',renderRanking);$('matchesSearch').addEventListener('input',renderMatches);
  $('closeDetail').addEventListener('click',()=>navigateTo('#/ranking'));$('detailOverlay').addEventListener('click',e=>{if(e.target===$('detailOverlay'))navigateTo('#/ranking')});
  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('detailOverlay').classList.contains('hidden'))navigateTo('#/ranking')});
+ $('playerLoginForm').addEventListener('submit',async e=>{
+   e.preventDefault();try{
+     await api('/api/player/login',{method:'POST',body:{player_id:Number($('playerLoginId').value),password:$('playerLoginPassword').value}});
+     $('playerLoginPassword').value='';toast('Bem-vindo à sua área de jogador.');await refreshPlayerSession();
+   }catch(err){toast(err.message,true)}
+ });
+ $('playerLogoutBtn').addEventListener('click',async()=>{try{await api('/api/player/logout',{method:'POST',body:{}});state.playerSession=null;await refreshPlayerSession();toast('Você saiu da sua conta.')}catch(err){toast(err.message,true)}});
+ $('playerPasswordForm').addEventListener('submit',async e=>{e.preventDefault();try{
+   await api('/api/player/password',{method:'POST',body:{current_password:$('playerOldPassword').value,new_password:$('playerNewPassword').value}});
+   $('playerPasswordForm').reset();toast('Senha atualizada.');
+ }catch(err){toast(err.message,true)}});
  $('loginForm').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/login',{method:'POST',body:{username:$('adminUsername').value.trim(),password:$('adminPassword').value}});$('adminPassword').value='';toast('Acesso autorizado.');await refreshAdminSession()}catch(err){toast(err.message,true)}});
  $('logoutBtn').addEventListener('click',async()=>{try{await api('/api/logout',{method:'POST',body:{}});state.admin=null;await refreshAdminSession();toast('Sessão encerrada.')}catch(err){toast(err.message,true)}});
  $('eventForm').addEventListener('submit',async e=>{
@@ -807,4 +879,5 @@ applyRoute(false);
 loadPublic(true).then(()=>{
   resetMatchForm();resetTable();repopulateTableSlots();
   applyRoute(false);
+  if(state.currentPanel==='playerArea')refreshPlayerSession();
 });

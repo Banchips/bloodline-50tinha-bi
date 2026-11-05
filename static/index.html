@@ -11,7 +11,7 @@
 <body>
   <header class="topbar">
     <a class="brand" id="homeBrand" href="#/ranking" aria-label="Ir para o ranking"><div class="brand-symbol">B<span>50</span></div><div><strong>BLOODLINE</strong><small>50TINHA · INTELIGÊNCIA DA LIGA</small></div></a>
-    <div class="top-right"><span class="live"><span class="live-dot"></span> Ranking oficial da plataforma</span><a class="admin-access signup-nav hidden" id="signupNav" href="#/signup">✦ Inscrições abertas</a><a class="admin-access" id="roundsNav" href="#/rounds">▦ Rodadas</a><a class="admin-access" id="tableNav" href="#/table">⚔ Enviar mesa</a><a class="admin-access" id="decksNav" href="#/decks">▤ Decklists</a><a class="admin-access" id="adminNav" href="#/admin/review"><span aria-hidden="true">⚙</span> Administração</a></div>
+    <div class="top-right"><span class="live"><span class="live-dot"></span> Ranking oficial da plataforma</span><a class="admin-access signup-nav hidden" id="signupNav" href="#/signup">✦ Inscrições abertas</a><a class="admin-access active-glow" id="playerAreaNav" href="#/my-area">♟ Área do jogador</a><a class="admin-access" id="decksNav" href="#/decks">▤ Decklists</a><a class="admin-access" id="adminNav" href="#/admin/review"><span aria-hidden="true">⚙</span> Administração</a></div>
   </header>
   <main class="shell">
     <section id="publicPanel">
@@ -53,7 +53,7 @@
           <button type="submit" id="signupSubmit" class="button-primary">Confirmar inscrição</button>
         </form>
         <div id="signupMessage" role="status" aria-live="polite" class="import-summary"></div>
-        <div class="helper-panel">A inscrição não confirma presença, pagamento ou aprovação da decklist. Esses controles ficam com a organização.</div>
+        <div class="helper-panel">A inscrição não confirma presença, pagamento ou aprovação da decklist. Esses controles ficam com a organização. Depois de se inscrever, solicite sua senha de jogador à organização para acessar sua mesa.</div>
       </section>
     </section>
     <section id="invitePanel" class="hidden">
@@ -73,6 +73,18 @@
         </form>
       </section>
       <section class="panel padded"><span class="kicker">CONFERÊNCIA</span><h2>Mesas aprovadas</h2><p>Somente resultados conferidos pela administração.</p><div class="table-history" id="tableHistory"></div></section>
+    </section>
+    <section id="playerAreaPanel" class="hidden">
+      <div class="admin-hero"><div><span class="kicker">ÁREA RESTRITA DO PARTICIPANTE</span><h1>Minha <em>mesa.</em></h1><p>Entre com o acesso entregue pela organização para consultar seu EP e enviar o resultado da sua mesa.</p></div><a class="button-outline" href="#/ranking">← Voltar ao ranking</a></div>
+      <section id="playerLoginWrap" class="panel padded">
+        <span class="kicker">IDENTIFICAÇÃO</span><h2>Login do jogador</h2><p>Você precisa estar inscrito no evento e ter uma senha fornecida pela organização. Não use a senha de administrador.</p>
+        <form id="playerLoginForm" class="stack-form"><label>Jogador<select id="playerLoginId" required></select></label><label>Senha<input id="playerLoginPassword" type="password" autocomplete="current-password" required></label><button class="button-primary" type="submit">Entrar na minha mesa</button></form>
+      </section>
+      <div id="playerDashboard" class="hidden">
+        <section class="panel padded"><div class="player-portal-header"><div><span class="kicker">MINHA CONTA</span><h2 id="playerIdentity"></h2><p class="muted-note">Aparecem somente as mesas publicadas em que você participa. Os resultados exigem aprovação administrativa.</p></div><button type="button" id="playerLogoutBtn" class="button-outline">Sair da conta</button></div></section>
+        <div id="playerRoundsList" class="player-rounds-list"></div>
+        <section class="panel padded"><h3>Alterar minha senha</h3><form id="playerPasswordForm" class="stack-form"><label>Senha atual<input id="playerOldPassword" type="password" autocomplete="current-password" required></label><label>Nova senha (mínimo 10 caracteres)<input id="playerNewPassword" type="password" autocomplete="new-password" minlength="10" required></label><button class="button-outline" type="submit">Trocar senha</button></form></section>
+      </div>
     </section>
     <section id="decksPanel" class="hidden">
       <div class="admin-hero"><div><span class="kicker">ARQUIVO DOS PARTICIPANTES</span><h1>Decks da <em>Bloodline.</em></h1><p>Consulte as decklists e cadastre ou atualize a sua sem precisar de uma conta.</p></div><a class="button-outline backPublic" href="#/ranking">← Voltar ao ranking</a></div>
@@ -115,7 +127,7 @@
                 <label>Tribo<select id="eventTribe" required></select></label><label>Decklist (opcional)<select id="eventDeck"><option value="">Sem decklist</option></select></label>
                 <div class="form-actions"><button class="button-primary" type="submit">Adicionar jogador</button></div>
               </form>
-              <div class="table-scroller"><table class="event-roster-table"><thead><tr><th>JOGADOR</th><th>TRIBO</th><th>CHECK-IN</th><th>PAGAMENTO</th><th>DECKLIST</th><th>AÇÕES</th></tr></thead><tbody id="eventRosterRows"></tbody></table></div>
+              <div id="playerAccessNotice" class="helper-panel hidden" aria-live="polite"></div><div class="table-scroller"><table class="event-roster-table"><thead><tr><th>JOGADOR</th><th>TRIBO</th><th>CHECK-IN</th><th>PAGAMENTO</th><th>DECKLIST</th><th>ACESSO</th><th>AÇÕES</th></tr></thead><tbody id="eventRosterRows"></tbody></table></div>
               <p class="muted-note">Clique nos indicadores para alternar. ✓ = confirmado; — = pendente ou não aprovado. O status da decklist é marcado pela organização.</p>
             </div>
           </section>
