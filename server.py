@@ -1793,32 +1793,44 @@ class Handler(BaseHTTPRequestHandler):
                     table_id=create_table(db,header,entries,True)
                 return self.respond(201,{'ok':True,'id':table_id,'status':'approved'})
             if path == '/api/decks' and method == 'POST':
+                # A identidade vem da sessão, não do player_id fornecido pelo cliente.
+                owner=self.current_player()
+                admin=self.current_admin()
+                if not owner and not admin:
+                    return self.respond(401,{'error':'Entre na Área do Jogador para cadastrar uma decklist.'})
                 with DB_LOCK, conn_db() as db:
-                    vals=validated_deck(db,obj)
-                    if not self.authed():
-                        throttle_public(self.client_address[0],'decks',15)
-                    token=secrets.token_urlsafe(24)
-                    hashed=hashlib.sha256(token.encode('utf-8')).hexdigest()
-                    cur=db.execute('INSERT INTO decks(player_id,tribe_id,name,url,edit_token_hash) VALUES(?,?,?,?,?)',(*vals,hashed))
-                return self.respond(201,{'ok':True,'id':cur.lastrowid,'edit_key':token})
+                    values=dict(obj)
+                    if owner:
+                        values['player_id']=owner['id']
+                    vals=validated_deck(db,values)
+                    # Coluna legada mantida para compatibilidade: as chaves antigas
+                    # não são mais aceitas como forma de autenticação.
+                    inert_hash=hashlib.sha256(secrets.token_bytes(32)).hexdigest()
+                    cur=db.execute('INSERT INTO decks(player_id,tribe_id,name,url,edit_token_hash) VALUES(?,?,?,?,?)',(*vals,inert_hash))
+                    db.commit()
+                return self.respond(201,{'ok':True,'id':cur.lastrowid})
             deck_match=re.fullmatch(r'/api/decks/(\d+)',path)
-            if deck_match and method=='PUT':
+            if deck_match and method in ('PUT','DELETE'):
                 did=int(deck_match.group(1))
+                owner=self.current_player()
+                admin=self.current_admin()
+                if not owner and not admin:
+                    return self.respond(401,{'error':'Faça login para administrar a decklist.'})
                 with DB_LOCK, conn_db() as db:
                     deck=db.execute('SELECT * FROM decks WHERE id=?',(did,)).fetchone()
                     if not deck:raise UserInputError('Deck não encontrado.')
-                    if not self.authed():
-                        supplied=txt(obj.get('edit_key'),'Chave de edição',200)
-                        hashed=hashlib.sha256(supplied.encode('utf-8')).hexdigest()
-                        if not hmac.compare_digest(hashed,deck['edit_token_hash']):
-                            return self.respond(403,{'error':'Chave de edição incorreta.'})
-                        throttle_public(self.client_address[0],'decks_edit',40)
-                        # Não permitir assumir outro perfil com uma chave antiga.
-                        obj['player_id']=deck['player_id']
-                        obj['tribe_id']=deck['tribe_id']
-                    vals=validated_deck(db,obj)
-                    db.execute('''UPDATE decks SET player_id=?,tribe_id=?,name=?,url=?,updated_at=CURRENT_TIMESTAMP WHERE id=?''',(*vals,did))
-                    # Partidas registradas preservam a tribo usada naquele dia.
+                    if not admin and owner['id']!=deck['player_id']:
+                        return self.respond(403,{'error':'Somente o dono do deck ou um administrador pode alterá-lo.'})
+                    if method=='PUT':
+                        values=dict(obj)
+                        # Até um administrador mantém o dono original ao editar.
+                        values['player_id']=deck['player_id']
+                        vals=validated_deck(db,values)
+                        db.execute('UPDATE decks SET player_id=?,tribe_id=?,name=?,url=?,updated_at=CURRENT_TIMESTAMP WHERE id=?',(*vals,did))
+                    else:
+                        # FKs ON DELETE SET NULL preservam partidas e histórico.
+                        db.execute('DELETE FROM decks WHERE id=?',(did,))
+                    db.commit()
                 return self.respond(200,{'ok':True})
             if not self.require_admin():return
             with DB_LOCK, conn_db() as db:
@@ -1988,13 +2000,6 @@ class Handler(BaseHTTPRequestHandler):
                     db.execute('DELETE FROM matches WHERE table_id=?',(table_id,))
                     db.execute('DELETE FROM game_tables WHERE id=?',(table_id,))
                     db.commit()
-                    return self.respond(200,{'ok':True})
-                if deck_match and method=='DELETE':
-                    did=int(deck_match.group(1))
-                    if not exists(db,'decks',did):raise UserInputError('Deck inexistente.')
-                    db.execute('UPDATE matches SET deck_id=NULL WHERE deck_id=?',(did,))
-                    db.execute('UPDATE game_table_entries SET deck_id=NULL WHERE deck_id=?',(did,))
-                    db.execute('DELETE FROM decks WHERE id=?',(did,))
                     return self.respond(200,{'ok':True})
                 if path == '/api/seasons' and method == 'POST':
                     name = txt(obj.get('name'),'Temporada',100)
