@@ -75,7 +75,7 @@
       <section class="panel padded"><span class="kicker">CONFERÊNCIA</span><h2>Mesas aprovadas</h2><p>Somente resultados conferidos pela administração.</p><div class="table-history" id="tableHistory"></div></section>
     </section>
     <section id="playerAreaPanel" class="hidden">
-      <div class="admin-hero"><div><span class="kicker">ÁREA DO PARTICIPANTE</span><h1>Minha <em>mesa.</em></h1><p>Crie seu próprio usuário e senha uma única vez. Depois, use essa conta em todos os eventos.</p></div><a class="button-outline" href="#/ranking">← Voltar ao ranking</a></div>
+      <div class="admin-hero"><div><span class="kicker">PORTAL BLOODLINE</span><h1>Área do <em>Jogador.</em></h1><p>Seus jogos, suas tribos, sua história e suas vitórias — tudo em um só lugar.</p></div><a class="button-outline" href="#/ranking">← Voltar ao ranking</a></div>
       <section id="playerLoginWrap" class="panel padded">
         <span class="kicker">IDENTIFICAÇÃO</span><h2>Entrar na minha conta</h2><p>Use o nome de usuário e a senha que você cadastrou. Sua conta vale para todas as temporadas.</p>
         <form id="playerLoginForm" class="stack-form"><label>Nome de usuário<input id="playerLoginUsername" autocomplete="username" required maxlength="100" placeholder="Ex.: alpha.mtg"></label><label>Senha<input id="playerLoginPassword" type="password" autocomplete="current-password" required></label><button class="button-primary" type="submit">Entrar na minha área</button></form>
@@ -91,10 +91,19 @@
           <div id="playerRegisterMessage" role="status" aria-live="polite" class="muted-note"></div>
         </div>
       </section>
-      <div id="playerDashboard" class="hidden">
-        <section class="panel padded"><div class="player-portal-header"><div><span class="kicker">MINHA CONTA</span><h2 id="playerIdentity"></h2><p class="muted-note">Aparecem somente as mesas publicadas em que você participa. Os resultados exigem aprovação administrativa.</p></div><button type="button" id="playerLogoutBtn" class="button-outline">Sair da conta</button></div></section>
-        <div id="playerRoundsList" class="player-rounds-list"></div>
-        <section class="panel padded"><h3>Alterar minha senha</h3><form id="playerPasswordForm" class="stack-form"><label>Senha atual<input id="playerOldPassword" type="password" autocomplete="current-password" required></label><label>Nova senha (mínimo 10 caracteres)<input id="playerNewPassword" type="password" autocomplete="new-password" minlength="10" required></label><button class="button-outline" type="submit">Trocar senha</button></form></section>
+      <div id="playerDashboard" class="hidden player-dashboard">
+        <section class="panel padded player-welcome"><div class="player-portal-header"><div><span class="kicker">MEU PERFIL</span><h2 id="playerIdentity"></h2><p class="muted-note">Acompanhe seus resultados e registre suas partidas oficiais com a organização.</p></div><button type="button" id="playerLogoutBtn" class="button-outline">Sair da conta ↗</button></div></section>
+        <section id="playerRoundsSection" class="player-dashboard-block hidden" aria-label="Minha mesa">
+          <div class="player-dashboard-heading"><span class="kicker">01 · RODADAS ATRIBUÍDAS</span><h2>Minha Mesa</h2><p>Confira os participantes e suas tribos. Combine o resultado com toda a mesa antes de enviá-lo.</p></div>
+          <div id="playerRoundsList" class="player-rounds-list"></div>
+        </section>
+        <section class="panel padded player-dashboard-block" id="playerStatsSection">
+          <div class="player-portal-header player-stats-header"><div><span class="kicker">02 · MEU HISTÓRICO</span><h2>Meus Resultados</h2><p class="muted-note">Seu desempenho por temporada, tribo e deck, com base nas partidas aprovadas.</p></div><label class="player-stats-filter">Temporada<select id="playerStatsSeason"><option value="all">Todas as temporadas</option></select></label></div>
+          <div id="playerStatsContent" aria-live="polite"><p class="muted-note">Carregando seus resultados...</p></div>
+        </section>
+        <details class="panel padded player-password-fold player-dashboard-block"><summary><span><span class="kicker">03 · SEGURANÇA</span><strong>Alterar minha senha</strong><small>Abra para atualizar sua senha de acesso</small></span><span class="fold-arrow" aria-hidden="true">⌄</span></summary>
+          <form id="playerPasswordForm" class="stack-form"><label>Senha atual<input id="playerOldPassword" type="password" autocomplete="current-password" required></label><label>Nova senha (mínimo 10 caracteres)<input id="playerNewPassword" type="password" autocomplete="new-password" minlength="10" required></label><button class="button-outline" type="submit">Trocar senha</button></form>
+        </details>
       </div>
     </section>
     <section id="decksPanel" class="hidden">

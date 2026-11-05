@@ -1108,6 +1108,48 @@ def event_eligible(db, event_id):
         ORDER BY p.name COLLATE NOCASE''',(event_id,))]
 
 
+def player_personal_results(db, player_id, season_arg='all'):
+    # Estatísticas privadas; somente matches aprovadas pontuam.
+    seasons = [dict(r) for r in db.execute('''SELECT s.id, s.name FROM seasons s
+        WHERE EXISTS (SELECT 1 FROM matches m WHERE m.season_id=s.id AND m.player_id=?)
+           OR EXISTS (SELECT 1 FROM event_registrations er
+                      JOIN league_events e ON e.id=er.event_id
+                      WHERE er.player_id=? AND e.season_id=s.id)
+        ORDER BY s.sort_order, s.id''', (player_id, player_id))]
+    if str(season_arg) not in ('', 'all') and not any(str(i['id']) == str(season_arg) for i in seasons):
+        raise UserInputError('Temporada indisponível para este jogador.')
+    selected = str(season_arg or 'all')
+    view = public_view(db, selected)
+    profile = next((p for p in view['player_profiles'] if p['id'] == player_id), None)
+    if profile is None:
+        row = db.execute('SELECT name FROM players WHERE id=?', (player_id,)).fetchone()
+        if not row:raise UserInputError('Jogador não encontrado.')
+        profile = {'id': player_id, 'name': row['name'], 'points': 0,
+                   'matches': 0, 'wins': 0, 'draws': 0, 'losses': 0,
+                   'win_rate': 0, 'tribes': [], 'decks': [], 'excluded_matches': 0}
+    ranks = [r for r in view['ranking'] if r['player_id'] == player_id]
+    args = [player_id]
+    clause = ''
+    if selected != 'all':
+        clause = ' AND m.season_id=?'
+        args.append(int(selected))
+    matches = [dict(r) for r in db.execute('''SELECT m.event_date,m.episode,m.round_no,
+          m.result, s.name AS season_name, t.name AS tribe_name,
+          COALESCE(d.name,'') AS deck_name,
+          CASE WHEN x.tribe_id IS NOT NULL THEN 1 ELSE 0 END AS excluded
+        FROM matches m
+        JOIN seasons s ON s.id=m.season_id
+        JOIN tribes t ON t.id=m.tribe_id
+        LEFT JOIN decks d ON d.id=m.deck_id
+        LEFT JOIN exclusions x ON x.season_id=m.season_id AND x.tribe_id=m.tribe_id
+        WHERE m.player_id=?''' + clause + '''
+        ORDER BY m.event_date DESC,m.round_no DESC,m.id DESC LIMIT 60''', args)]
+    for match in matches:
+        match['points'] = 0 if match['excluded'] else RULES.get(match['result'], 0)
+    return {'player_id': player_id, 'season_id': selected, 'seasons': seasons,
+            'profile': profile, 'ranking_entries': ranks, 'recent_matches': matches}
+
+
 def player_assigned_rounds(db, player_id):
     rounds=[]
     assignments=db.execute('''SELECT pair.id AS pairing_id,pair.table_no,rd.round_no,
@@ -1128,6 +1170,9 @@ def player_assigned_rounds(db, player_id):
              ORDER BY id DESC LIMIT 1''',(a['pairing_id'],)).fetchone()
         item['status']=prev['status'] if prev else 'not_sent'
         item['submission_id']=prev['id'] if prev else None
+        item['submitted_results'] = ({str(r['player_id']): r['result'] for r in db.execute(
+            'SELECT player_id,result FROM game_table_entries WHERE table_id=?', (prev['id'],))}
+            if prev and prev['status'] in ('pending', 'approved') else {})
         rounds.append(item)
     return rounds
 
@@ -1261,7 +1306,7 @@ def swap_event_round_players(db,event_id,round_no,first,second):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = 'BloodlineBI/2.3.0'
+    server_version = 'BloodlineBI/2.3.3'
 
     def log_message(self, fmt, *args):
         print('%s - %s' % (self.address_string(), fmt % args))
@@ -1448,6 +1493,11 @@ class Handler(BaseHTTPRequestHandler):
                 if player is None:return self.respond(401,{'error':'Entre na área do jogador.'})
                 with conn_db() as db:
                     return self.respond(200,{'rounds':player_assigned_rounds(db,player['id'])})
+            if path == '/api/player/my-results':
+                player=self.current_player()
+                if player is None:return self.respond(401,{'error':'Entre na área do jogador.'})
+                with conn_db() as db:
+                    return self.respond(200,player_personal_results(db,player['id'],season))
             if path == '/api/events/open':
                 with conn_db() as db:
                     return self.respond(200, {'events':public_open_events(db)})

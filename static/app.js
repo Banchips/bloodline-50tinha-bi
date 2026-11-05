@@ -51,7 +51,7 @@ async function loadPublic(chooseDefault=false){
 // Busca consistente nos seletores de nomes/listas sem mudar os IDs já usados pelo BI.
 // O <select> original continua sendo a fonte da verdade para as regras existentes.
 const searchableSelectIds=new Set([
- 'seasonSelect','tSeason','tSubmitter','playerRegisterId','signupPlayer','signupTribe','signupDeck',
+ 'seasonSelect','playerStatsSeason','tSeason','tSubmitter','playerRegisterId','signupPlayer','signupTribe','signupDeck',
  'dPlayer','dTribe','deckFilterPlayer','eventSeason','eventPlayer','eventTribe','eventDeck',
  'mSeason','mPlayer','mTribe','mDeck','exSeason','importSeason','resetAdminUser'
 ]);
@@ -807,7 +807,7 @@ function populateInvite(ev){
   $('inviteLink').value=link;
   $('inviteQR').src=`/api/admin/events/${ev.id}/qrcode.svg`;
 }
-// Área autenticada do jogador. O servidor vincula o envio ao pareamento real.
+// Painel pessoal: estatísticas oficiais por temporada e envio assistido da mesa.
 async function refreshPlayerSession(){
   try{
     const current=await api('/api/player/session');state.playerSession=current.player?current:null;
@@ -817,8 +817,14 @@ async function refreshPlayerSession(){
     $('playerRegisterId').innerHTML='<option value="">Sou novo na liga</option>'+getRegisteredPlayers().map(p=>`<option value="${p.id}">${safe(p.name)}</option>`).join('');
     $('playerRegisterNewNameWrap').classList.toggle('hidden',Boolean($('playerRegisterId').value));
     if(state.currentPanel==='signup')renderSignupForm();
-    if(current.player){$('playerIdentity').textContent=current.name;await refreshPlayerRounds();}
-    else {$('playerRoundsList').innerHTML='';state.playerRounds=[];}
+    if(current.player){
+      $('playerIdentity').textContent=current.name;
+      await Promise.all([refreshPlayerRounds(),refreshPlayerResults()]);
+    }else{
+      state.playerRounds=[];state.playerStatsSeason='all';
+      $('playerRoundsList').replaceChildren();$('playerRoundsSection').classList.add('hidden');
+      $('playerStatsContent').innerHTML='<p class="muted-note">Entre para consultar suas estatísticas.</p>';
+    }
   }catch(err){toast(err.message,true)}
 }
 async function refreshPlayerRounds(){
@@ -826,24 +832,145 @@ async function refreshPlayerRounds(){
   try{const data=await api('/api/player/my-rounds');state.playerRounds=data.rounds||[];renderMyRounds();}
   catch(err){toast(err.message,true)}
 }
+function validatePlayerTableResults(values){
+  if(values.some(v=>!['V','D','E'].includes(v)))return false;
+  const wins=values.filter(v=>v==='V').length;
+  const draws=values.filter(v=>v==='E').length;
+  return (wins===1 && draws===0) || (wins===0 && draws>=2);
+}
 function renderMyRounds(){
   const arr=state.playerRounds;
-  $('playerRoundsList').innerHTML=arr.length?arr.map(round=>{
+  $('playerRoundsSection').classList.toggle('hidden',arr.length===0);
+  $('playerRoundsList').innerHTML=arr.map(round=>{
     const status=round.status==='pending'?'Enviado · aguardando aprovação':round.status==='approved'?'Resultado aprovado':round.status==='rejected'?'Resultado rejeitado · pode reenviar':'Aguardando lançamento';
     const locked=['pending','approved'].includes(round.status);
-    return `<section class="panel padded player-round-item"><span class="kicker">${safe(round.season_name)} · ${safe(round.episode)} · ${fmtDate(round.event_date)}</span><div class="round-heading"><div><h2>${safe(round.event_name)} — R${round.round_no}, Mesa ${round.table_no}</h2><p>${status}</p></div><span class="round-status ${locked?'published':'draft'}">${locked?'●':'○'} ${status}</span></div>
-      <form class="player-result-form" data-pairing="${round.pairing_id}">
-      <div class="player-result-grid">${round.players.map((p,i)=>`<label class="player-result-person ${p.player_id===state.playerSession.id?'myself':''}"><strong>${safe(p.player_name)}${p.player_id===state.playerSession.id?' (você)':''}</strong><small>${safe(p.tribe_name)}</small><select name="result-${p.player_id}" data-player="${p.player_id}" required ${locked?'disabled':''}><option value="">Escolha o resultado</option><option value="D">Derrota · 0 pontos</option><option value="V">Vitória · 3 pontos</option><option value="E">Empate · 1 ponto</option></select></label>`).join('')}</div>
-      <p class="muted-note">Marque um vencedor e os demais derrotados, ou empate de 2 a 4 participantes. O resultado só entra no ranking após aprovação.</p>
-      <div class="form-actions">${locked?'<span class="muted-note">Envio bloqueado: já existe um resultado pendente ou aprovado.</span>':'<button class="button-primary" type="submit">Enviar resultado desta mesa</button>'}</div></form></section>`;
-  }).join(''):'<section class="panel padded"><h2>Nenhuma mesa atribuída</h2><p>Você precisa estar inscrito em um evento com check-in e pagamento confirmados, e a rodada precisa estar publicada pela organização.</p></section>';
-  $('playerRoundsList').querySelectorAll('.player-result-form').forEach(form=>form.addEventListener('submit',async e=>{
-    e.preventDefault();const pairing=Number(form.dataset.pairing);
-    const entries=[...form.querySelectorAll('select[data-player]')].map(select=>({player_id:Number(select.dataset.player),result:select.value}));
-    if(!confirm('Confirmar o envio do resultado desta mesa? Depois, apenas a administração poderá aprovar ou rejeitar.'))return;
-    try{await api(`/api/player/pairings/${pairing}/result`,{method:'POST',body:{entries}});toast('Resultado recebido e aguardando aprovação.');await refreshPlayerRounds();}
-    catch(err){toast(err.message,true)}
-  }));
+    const existing=round.submitted_results||{};
+    return `<section class="panel padded player-round-item"><span class="kicker">${safe(round.season_name)} · ${safe(round.episode)} · ${fmtDate(round.event_date)}</span><div class="round-heading"><div><h3>${safe(round.event_name)} · Rodada ${round.round_no} · Mesa ${round.table_no}</h3><p>Confira o resultado com todos os participantes antes de enviá-lo.</p></div><span class="round-status ${locked?'published':'draft'}">${locked?'●':'○'} ${status}</span></div>
+      <form class="player-result-form" data-pairing="${round.pairing_id}" data-locked="${locked?'1':'0'}">
+      <div class="player-result-grid">${round.players.map(p=>`<div class="player-result-person ${p.player_id===state.playerSession.id?'myself':''}" data-player="${p.player_id}">
+        <div class="player-seat-title"><strong>${safe(p.player_name)}${p.player_id===state.playerSession.id?' <span class="player-you">Você</span>':''}</strong><span class="player-seat-tribe">${safe(p.tribe_name)}</span></div>
+        <div class="player-seat-state" aria-live="polite">Aguardando resultado</div>
+        <div class="player-seat-choices" role="group" aria-label="Resultado de ${safe(p.player_name)}">
+          <button type="button" class="player-choice choice-win" data-result="V" aria-label="Vitória de ${safe(p.player_name)}" aria-pressed="false" title="Vitória" ${locked?'disabled':''}><span aria-hidden="true">★</span><small>Vitória</small></button>
+          <button type="button" class="player-choice choice-loss" data-result="D" aria-label="Derrota de ${safe(p.player_name)}" aria-pressed="false" title="Derrota" ${locked?'disabled':''}><span aria-hidden="true">✕</span><small>Derrota</small></button>
+          <button type="button" class="player-choice choice-draw" data-result="E" aria-label="Empate de ${safe(p.player_name)}" aria-pressed="false" title="Empate" ${locked?'disabled':''}><span aria-hidden="true">≈</span><small>Empate</small></button>
+        </div></div>`).join('')}</div>
+      <p class="player-table-feedback" role="status" aria-live="polite"></p>
+      <div class="form-actions player-result-actions">${locked?'<span class="muted-note">Este resultado já foi enviado. Aguarde a organização.</span>':`<button class="button-primary player-send-result" type="submit" disabled>Enviar resultado</button><button class="button-outline player-clear-result" type="button">Limpar</button>`}</div>
+      </form></section>`;
+  }).join('');
+  $('playerRoundsList').querySelectorAll('.player-result-form').forEach(form=>{
+    const locked=form.dataset.locked==='1';
+    const round=arr.find(r=>String(r.pairing_id)===form.dataset.pairing);
+    const ids=round.players.map(p=>String(p.player_id));
+    let choices=Object.fromEntries(ids.map(id=>[id,(locked?(round.submitted_results||{})[id]:'')||'']));
+    let automatic=new Set();
+    function sync(){
+      const values=ids.map(id=>choices[id]);
+      const valid=validatePlayerTableResults(values);
+      form.querySelectorAll('.player-result-person').forEach(card=>{
+        const id=card.dataset.player,result=choices[id]||'';
+        card.classList.toggle('is-win',result==='V');
+        card.classList.toggle('is-loss',result==='D'&&!automatic.has(id));
+        card.classList.toggle('is-auto-loss',result==='D'&&automatic.has(id));
+        card.classList.toggle('is-draw',result==='E');
+        card.classList.toggle('is-unset',!result);
+        card.querySelector('.player-seat-state').textContent=result==='V'?'Vitória · 3 pontos':result==='D'?'Derrota · 0 pontos':result==='E'?'Empate · 1 ponto':'Aguardando resultado';
+        card.querySelectorAll('.player-choice').forEach(button=>{
+          const selected=button.dataset.result===result;
+          button.classList.toggle('selected',selected);
+          button.setAttribute('aria-pressed',selected?'true':'false');
+        });
+      });
+      const feedback=form.querySelector('.player-table-feedback');
+      if(locked){feedback.textContent=round.status==='approved'?'Resultado confirmado e pontuado.':'Resultado aguardando aprovação da organização.';}
+      else if(valid){feedback.textContent='✓ Mesa completa. Confira as marcações com todos e envie para aprovação.';}
+      else if(values.every(v=>!v)){feedback.textContent='Selecione vitória, derrota ou empate para começar. Uma vitória completa automaticamente as demais derrotas.';}
+      else if(values.some(v=>!v)){feedback.textContent='Faltam resultados. Marque todos os participantes para concluir.';}
+      else{feedback.textContent='Resultado inconsistente: escolha um único vencedor ou pelo menos dois empatados (os demais derrotados).';}
+      feedback.classList.toggle('is-ready',valid&&!locked);
+      const send=form.querySelector('.player-send-result');if(send)send.disabled=!valid;
+    }
+    form.querySelectorAll('.player-choice').forEach(button=>button.addEventListener('click',()=>{
+      if(locked)return;
+      const id=button.closest('.player-result-person').dataset.player;
+      const chosen=button.dataset.result;
+      const previous=choices[id];
+      // Ao desfazer uma vitória, elimine as derrotas preenchidas automaticamente.
+      if(previous==='V' && chosen!=='V'){
+        for(const autoId of automatic)if(choices[autoId]==='D')choices[autoId]='';
+        automatic.clear();
+      }
+      if(chosen==='V'){
+        choices=Object.fromEntries(ids.map(pid=>[pid,pid===id?'V':'D']));
+        automatic=new Set(ids.filter(pid=>pid!==id));
+      }else{
+        if(chosen==='E' && Object.values(choices).includes('V')){
+          for(const autoId of automatic)if(choices[autoId]==='D')choices[autoId]='';
+          for(const pid of ids)if(choices[pid]==='V')choices[pid]='';
+          automatic.clear();
+        }
+        choices[id]=previous===chosen?'':chosen;
+        automatic.delete(id);
+      }
+      sync();
+    }));
+    form.querySelector('.player-clear-result')?.addEventListener('click',()=>{
+      choices=Object.fromEntries(ids.map(id=>[id,'']));automatic.clear();sync();
+    });
+    form.addEventListener('submit',async e=>{
+      e.preventDefault();
+      if(locked)return;
+      const entries=round.players.map(p=>({player_id:p.player_id,result:choices[String(p.player_id)]||''}));
+      if(!validatePlayerTableResults(entries.map(p=>p.result)))return toast('Conclua uma combinação válida de vitória, derrota ou empate.',true);
+      const summary=round.players.map(p=>`${p.player_name}: ${choices[String(p.player_id)]==='V'?'Vitória':choices[String(p.player_id)]==='E'?'Empate':'Derrota'}`).join('\n');
+      if(!confirm(`Confirme o resultado com TODOS os jogadores da mesa antes de enviar.\n\n${summary}\n\nDepois do envio, o registro ficará aguardando aprovação da organização. Deseja continuar?`))return;
+      const send=form.querySelector('.player-send-result');send.disabled=true;
+      try{
+        await api(`/api/player/pairings/${Number(form.dataset.pairing)}/result`,{method:'POST',body:{entries}});
+        toast('Resultado enviado. Aguardando aprovação da organização.');
+        await Promise.all([refreshPlayerRounds(),refreshPlayerResults()]);
+      }catch(err){toast(err.message,true);sync();}
+    });
+    sync();
+  });
+}
+async function refreshPlayerResults(){
+  if(!state.playerSession)return;
+  try{
+    const selected=state.playerStatsSeason||'all';
+    const data=await api('/api/player/my-results?season='+encodeURIComponent(selected));
+    state.playerStatsSeason=String(data.season_id);
+    const picker=$('playerStatsSeason');
+    picker.innerHTML='<option value="all">Todas as temporadas</option>'+data.seasons.map(s=>`<option value="${s.id}">${safe(s.name)}</option>`).join('');
+    picker.value=state.playerStatsSeason;
+    picker._comboSync?.();
+    renderPlayerResults(data);
+  }catch(err){
+    // Quando a temporada deixou de ser válida, retorne para o histórico completo.
+    if(state.playerStatsSeason&&state.playerStatsSeason!=='all'){
+      state.playerStatsSeason='all';return refreshPlayerResults();
+    }
+    $('playerStatsContent').innerHTML=`<p class="muted-note">Não foi possível carregar os resultados: ${safe(err.message)}</p>`;
+  }
+}
+function renderPlayerResults(data){
+  const p=data.profile,deckList=(p.decks||[]).filter(d=>data.season_id==='all'||d.matches>0);
+  const stats=[['Pontos válidos',p.points],['Partidas',p.matches],['Vitórias',p.wins],['Empates',p.draws],['Derrotas',p.losses],['Win rate',Number(p.win_rate||0).toLocaleString('pt-BR',{maximumFractionDigits:1})+'%']];
+  const tribes=(p.tribes||[]).map(t=>{
+    const r=(data.ranking_entries||[]).find(x=>x.tribe_id===t.id);
+    const wr=t.matches?((t.wins/t.matches)*100).toLocaleString('pt-BR',{maximumFractionDigits:1})+'%':'—';
+    return `<tr><td><strong>${safe(t.name)}</strong></td><td>${t.points}</td><td>${t.matches}</td><td>${t.wins} / ${t.draws} / ${t.losses}</td><td>${wr}</td><td>${r?.opw_pct===null||r?.opw_pct===undefined?'—':Number(r.opw_pct).toLocaleString('pt-BR',{maximumFractionDigits:2})+'%'}</td></tr>`;
+  }).join('');
+  const decks=deckList.map(d=>{
+    const wr=d.matches?((d.wins/d.matches)*100).toLocaleString('pt-BR',{maximumFractionDigits:1})+'%':'—';
+    return `<tr><td><a href="${safe(d.url)}" target="_blank" rel="noopener noreferrer">${safe(d.name)} ↗</a><small class="player-stat-secondary">${safe(d.tribe_name)}</small></td><td>${d.points}</td><td>${d.matches}</td><td>${d.wins} / ${d.draws} / ${d.losses}</td><td>${wr}</td></tr>`;
+  }).join('');
+  const history=(data.recent_matches||[]).map(m=>`<tr><td>${fmtDate(m.event_date)}</td><td>${safe(m.season_name)} · ${safe(m.episode)} · R${m.round_no}</td><td>${safe(m.tribe_name)}${m.deck_name?`<small class="player-stat-secondary">${safe(m.deck_name)}</small>`:''}</td><td><span class="result-pill result-${m.result}">${safe(resultLabels[m.result]||m.result)}</span></td><td>${m.points}${m.excluded?' <small class="zero-note">(tribo não pontua)</small>':''}</td></tr>`).join('');
+  $('playerStatsContent').innerHTML=`<div class="player-stats-grid">${stats.map(([name,value])=>`<div class="player-stat-tile"><span>${name}</span><strong>${value}</strong></div>`).join('')}</div>
+    <div class="player-stat-group"><h3>Desempenho por tribo</h3><div class="player-table-scroll"><table class="player-stat-table"><thead><tr><th>Tribo</th><th>Pontos</th><th>Partidas</th><th>V / E / D</th><th>Win rate</th><th>OPW%</th></tr></thead><tbody>${tribes||'<tr><td colspan="6" class="muted-note">Nenhuma partida registrada nesta seleção.</td></tr>'}</tbody></table></div></div>
+    <div class="player-stat-group"><h3>Decks utilizados</h3><div class="player-table-scroll"><table class="player-stat-table"><thead><tr><th>Deck / Tribo</th><th>Pontos</th><th>Partidas</th><th>V / E / D</th><th>Win rate</th></tr></thead><tbody>${decks||'<tr><td colspan="5" class="muted-note">Nenhum deck vinculado a partidas nesta seleção. Partidas sem deck ainda contam na tribo.</td></tr>'}</tbody></table></div></div>
+    <div class="player-stat-group"><h3>Histórico recente</h3><div class="player-table-scroll"><table class="player-stat-table"><thead><tr><th>Data</th><th>Evento</th><th>Tribo / Deck</th><th>Resultado</th><th>Pontos</th></tr></thead><tbody>${history||'<tr><td colspan="5" class="muted-note">Nenhum resultado aprovado nesta seleção.</td></tr>'}</tbody></table></div><p class="muted-note">Exibindo até 60 participações recentes. Tribos que não pontuam continuam no histórico, com zero ponto válido.</p></div>`;
 }
 async function refreshPlayerAccessRequests(){
   try{
@@ -892,6 +1019,7 @@ function bindEvents(){
      await loadPublic();
    }catch(err){$('playerRegisterMessage').textContent=err.message;toast(err.message,true)}
  });
+ $('playerStatsSeason').addEventListener('change',()=>{state.playerStatsSeason=$('playerStatsSeason').value;refreshPlayerResults();});
  $('playerLogoutBtn').addEventListener('click',async()=>{try{await api('/api/player/logout',{method:'POST',body:{}});state.playerSession=null;await refreshPlayerSession();toast('Você saiu da sua conta.')}catch(err){toast(err.message,true)}});
  $('playerPasswordForm').addEventListener('submit',async e=>{e.preventDefault();try{
    await api('/api/player/password',{method:'POST',body:{current_password:$('playerOldPassword').value,new_password:$('playerNewPassword').value}});
