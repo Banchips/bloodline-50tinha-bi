@@ -205,7 +205,7 @@ function navigateTo(hash){
   else window.location.hash=hash;
 }
 function showPanel(name){
-  const route={public:'#/ranking',admin:'#/admin/review',table:'#/my-area',playerArea:'#/my-area',decks:'#/decks',signup:'#/signup',invite:'#/invite/'+(state.selectedEventId||'')};
+  const route={public:'#/ranking',admin:'#/admin/events',table:'#/my-area',playerArea:'#/my-area',decks:'#/decks',signup:'#/signup',invite:'#/invite/'+(state.selectedEventId||'')};
   navigateTo(route[name]||'#/ranking');
 }
 function showPanelNow(name,scroll=true){
@@ -241,7 +241,7 @@ function applyRoute(scroll=true){
     return;
   }
   if(route==='admin'){
-    const tab=adminTabs.has(parts[1])?parts[1]:'review';
+    const tab=adminTabs.has(parts[1])?parts[1]:'events';
     if(tab==='events' && /^\d+$/.test(parts[2]||''))state.selectedEventId=Number(parts[2]);
     showPanelNow('admin',scroll);
     switchAdminTab(tab,false);
@@ -569,6 +569,8 @@ async function submitDeck(e){
   }catch(err){toast(err.message,true)}
 }
 // Gestão administrativa de eventos, independente das partidas e do ranking.
+function eventDetailRoute(){return /^#\/admin\/events\/\d+$/.test(window.location.hash);}
+function eventSeasonValue(ev){const n=(String(ev.season_name||'').match(/\d+/)||[])[0];return n?Number(n):Number(ev.season_id||0);}
 async function loadLeagueEvents(){
   if(!state.loggedIn)return;
   try{
@@ -599,12 +601,23 @@ function refreshEventOptions(){
 }
 function renderLeagueEvents(){
   const events=state.events;
-  $('eventList').innerHTML=events.length?events.map(ev=>`<article class="event-list-item ${ev.id===state.selectedEventId?'selected':''}">
-   <a class="event-list-select" href="#/admin/events/${ev.id}" data-event-open="${ev.id}" ${ev.id===state.selectedEventId?'aria-current="page"':''}>
+  const isDetail=eventDetailRoute();
+  $('eventAgendaView').classList.toggle('hidden',isDetail);
+  $('eventDetailView').classList.toggle('hidden',!isDetail);
+  const search=($('eventAgendaSearch')?.value||'').trim().toLocaleLowerCase();
+  const dateDir=$('eventAgendaDate')?.value==='asc'?1:-1;
+  const seasonDir=$('eventAgendaSeason')?.value==='asc'?1:-1;
+  const primary=$('eventAgendaPrimary')?.value||'date';
+  const dateCmp=(a,b)=>a.event_date.localeCompare(b.event_date)*dateDir;
+  const seasonCmp=(a,b)=>(eventSeasonValue(a)-eventSeasonValue(b))*seasonDir;
+  const visibleEvents=events.filter(e=>e.name.toLocaleLowerCase().includes(search))
+    .sort((a,b)=>(primary==='season'?(seasonCmp(a,b)||dateCmp(a,b)):(dateCmp(a,b)||seasonCmp(a,b)))||(a.id-b.id));
+  $('eventList').innerHTML=visibleEvents.length?visibleEvents.map(ev=>`<article class="event-list-item ${ev.id===state.selectedEventId?'selected':''}">
+   <a class="event-list-select" href="#/admin/events/${ev.id}" target="_blank" rel="noopener noreferrer" data-event-open="${ev.id}" ${ev.id===state.selectedEventId?'aria-current="page"':''}>
     <span class="event-day">${safe(fmtDate(ev.event_date))}</span><strong>${safe(ev.name)}</strong>
     <small>${safe(ev.season_name)} · ${safe(ev.episode)} · ${ev.total_registered} inscrito(s) · ${ev.registrations_open?'INSCRIÇÕES ABERTAS':'INSCRIÇÕES FECHADAS'}</small>
    </a><a class="event-qr-btn" href="#/invite/${ev.id}" data-event-invite="${ev.id}" title="Abrir QR Code e link de inscrição" aria-label="QR Code e link para ${safe(ev.name)}">▦ QR</a><button class="event-edit-btn" type="button" data-event-edit="${ev.id}" aria-label="Editar evento ${safe(ev.name)}">Editar</button><button class="event-delete-btn" type="button" data-event-delete="${ev.id}" aria-label="Excluir evento ${safe(ev.name)}">Excluir</button>
-  </article>`).join(''):'<p class="muted-note">Nenhum evento cadastrado. Crie o primeiro no formulário ao lado.</p>';
+  </article>`).join(''):'<p class="muted-note">Nenhum evento encontrado para os filtros selecionados.</p>';
 
   $('eventList').querySelectorAll('[data-event-edit]').forEach(btn=>btn.addEventListener('click',()=>{
     const ev=events.find(e=>e.id===Number(btn.dataset.eventEdit));if(!ev)return;
@@ -612,7 +625,7 @@ function renderLeagueEvents(){
     $('eventDate').value=fmtDate(ev.event_date);$('eventName').value=ev.name;
     $('eventSeason').value=String(ev.season_id);$('eventEpisode').value=ev.episode;
     $('eventFormTitle').textContent='Editar evento';$('eventSave').textContent='Salvar evento';
-    $('eventCancelEdit').classList.remove('hidden');renderLeagueEvents();
+    $('eventCancelEdit').classList.remove('hidden');navigateTo('#/admin/events');renderLeagueEvents();
     $('eventForm').scrollIntoView({behavior:'smooth',block:'start'});
   }));
   $('eventList').querySelectorAll('[data-event-delete]').forEach(btn=>btn.addEventListener('click',async()=>{
@@ -633,7 +646,7 @@ function renderEventRoster(){
   $('eventRosterTitle').textContent=ev?ev.name:'Lista de jogadores';
   $('eventRosterSubtitle').textContent=ev?`${fmtDate(ev.event_date)} · ${ev.season_name} · ${ev.episode}`:'Cadastre e selecione um evento para inscrever jogadores.';
   $('eventRosterContent').classList.toggle('hidden',!ev);
-  $('eventRosterStats').innerHTML=ev?`<a class="event-roster-qr" id="eventRosterQR" href="#/invite/${ev.id}" title="Abrir convite e QR Code">▦ QR / Link</a><a class="event-roster-qr" href="#/rounds/${safe(ev.rounds_share_token)}" target="_blank" rel="noopener noreferrer" title="Link privado para as rodadas">🔗 Rodadas (link privado)</a><span>${ev.total_registered} inscritos</span><span>${ev.total_checkin} check-ins</span><span>${ev.total_paid} pagos</span><span>${ev.total_decklists_ok} decklists OK</span><button type="button" id="toggleEventOpen" class="event-open-switch ${ev.registrations_open?'on':''}" aria-pressed="${Boolean(ev.registrations_open)}">${ev.registrations_open?'● Inscrições abertas':'○ Abrir inscrições'}</button>`:'';
+  $('eventRosterStats').innerHTML=ev?`<a class="event-roster-qr" id="eventRosterQR" href="#/invite/${ev.id}" title="Abrir convite e QR Code">▦ QR / Link</a><a class="event-roster-qr" href="#/rounds/${safe(ev.rounds_share_token)}" target="_blank" rel="noopener noreferrer" title="Link privado para as rodadas">🔗 Rodadas (link privado)</a><span>${ev.rounds.length?`Rodada ${ev.rounds.at(-1).round_no} · ${ev.rounds.at(-1).status==='finished'?'Finalizada':ev.rounds.at(-1).status==='published'?'Publicada':'Rascunho'}`:'Nenhuma rodada'}</span><span>${ev.total_registered} inscritos</span><span>${ev.total_checkin} check-ins</span><span>${ev.total_paid} pagos</span><span>${ev.total_decklists_ok} decklists OK</span><button type="button" id="toggleEventOpen" class="event-open-switch ${ev.registrations_open?'on':''}" aria-pressed="${Boolean(ev.registrations_open)}">${ev.registrations_open?'● Inscrições abertas':'○ Abrir inscrições'}</button>`:'';
   if(ev){
     $('toggleEventOpen').addEventListener('click',async e=>{
       const next=!Boolean(ev.registrations_open);
@@ -649,13 +662,18 @@ function renderEventRoster(){
   if(!ev)return;
   const tribes=state.admin?.master?.tribes||[];
   $('eventRosterRows').innerHTML=ev.registrations.length?ev.registrations.map(r=>`<tr>
-    <td><strong>${safe(r.player_name)}</strong>${r.deck_url?`<small class="event-deck-small"><a href="${safe(r.deck_url)}" target="_blank" rel="noopener noreferrer">▤ ${safe(r.deck_name)} ↗</a></small>`:''}</td>
+    <td><strong>${safe(r.player_name)}</strong>${r.dropped_after_round!==null?`<small class="event-dropped">Drop após rodada ${r.dropped_after_round}</small>`:''}${r.deck_url?`<small class="event-deck-small"><a href="${safe(r.deck_url)}" target="_blank" rel="noopener noreferrer">▤ ${safe(r.deck_name)} ↗</a></small>`:''}</td>
     <td><select class="event-tribe-select" data-event-tribe="${r.id}" aria-label="Tribo de ${safe(r.player_name)}">${tribes.map(t=>`<option value="${t.id}" ${t.id===r.tribe_id?'selected':''}>${safe(t.name)}</option>`).join('')}</select></td>
     <td><button type="button" class="event-toggle ${r.checkin?'on':''}" data-event-toggle="${r.id}" data-field="checkin" aria-pressed="${Boolean(r.checkin)}" title="${r.checkin?'Check-in confirmado':'Check-in pendente'}"><span aria-hidden="true">${r.checkin?'✓':'○'}</span><small>${r.checkin?'Feito':'Pendente'}</small></button></td>
     <td><button type="button" class="event-toggle ${r.paid?'on':''}" data-event-toggle="${r.id}" data-field="paid" aria-pressed="${Boolean(r.paid)}" title="${r.paid?'Pagamento confirmado':'Pagamento pendente'}"><span aria-hidden="true">${r.paid?'✓':'○'}</span><small>${r.paid?'Pago':'Pendente'}</small></button></td>
     <td><button type="button" class="event-toggle ${r.decklist_ok?'on':''}" data-event-toggle="${r.id}" data-field="decklist_ok" aria-pressed="${Boolean(r.decklist_ok)}" title="${r.decklist_ok?'Decklist aprovada':'Decklist ainda não aprovada'}"><span aria-hidden="true">${r.decklist_ok?'✓':'✕'}</span><small>${r.decklist_ok?'OK':'Não'}</small></button></td>
     <td><span class="muted-note">${r.has_player_access?'Conta registrada':'Cadastro próprio'}</span></td>
-    <td><button type="button" class="event-remove" data-event-remove="${r.id}" aria-label="Remover ${safe(r.player_name)} deste evento">Remover</button></td>
+    <td><details class="event-actions-menu"><summary aria-label="Ações do jogador ${safe(r.player_name)}">Ações ▾</summary><div class="event-actions-dropdown">
+      <button type="button" data-event-remove="${r.id}">Remover jogador do torneio</button>
+      <button type="button" data-event-drop="${r.id}">${r.dropped_after_round===null?'Dropar após a rodada atual':'Reativar para próximas rodadas'}</button>
+      <button type="button" data-event-warning="${r.id}">Registrar warning (${ev.warnings.filter(w=>w.player_id===r.player_id).length})</button>
+      ${ev.warnings.filter(w=>w.player_id===r.player_id).map(w=>`<small class="event-warning-note">⚠ ${safe(w.note)}<br>${safe(w.admin_name||'Organização')} · ${safe(fmtDate((w.created_at||'').slice(0,10)))}</small>`).join('')}
+    </div></details></td>
   </tr>`).join(''):'<tr><td class="empty" colspan="7">Nenhum jogador inscrito neste evento.</td></tr>';
   $('eventRosterRows').querySelectorAll('[data-event-toggle]').forEach(btn=>btn.addEventListener('click',async()=>{
     const registration=ev.registrations.find(x=>x.id===Number(btn.dataset.eventToggle));if(!registration)return;
@@ -670,6 +688,22 @@ function renderEventRoster(){
     const id=Number(sel.dataset.eventTribe);sel.disabled=true;
     try{await api(`/api/admin/events/${ev.id}/registrations/${id}`,{method:'PUT',body:{tribe_id:Number(sel.value)}});await loadLeagueEvents();toast('Tribo atualizada.');}
     catch(err){toast(err.message,true);await loadLeagueEvents()}
+  }));
+  $('eventRosterRows').querySelectorAll('[data-event-drop]').forEach(btn=>btn.addEventListener('click',async()=>{
+    const r=ev.registrations.find(x=>x.id===Number(btn.dataset.eventDrop));if(!r)return;
+    const drop=r.dropped_after_round===null;
+    if(!confirm(`${drop?'Dropar':'Reativar'} ${r.player_name}? O drop preserva resultados já jogados e impede pareamentos futuros.`))return;
+    try{await api(`/api/admin/events/${ev.id}/registrations/${r.id}/drop`,{method:'POST',body:{drop}});await loadLeagueEvents();toast(drop?'Drop registrado.':'Jogador reativado.');}
+    catch(err){toast(err.message,true)}
+  }));
+  $('eventRosterRows').querySelectorAll('[data-event-warning]').forEach(btn=>btn.addEventListener('click',async()=>{
+    const r=ev.registrations.find(x=>x.id===Number(btn.dataset.eventWarning));if(!r)return;
+    const note=prompt(`Registrar warning administrativo para ${r.player_name}. Descreva o ocorrido (sem aplicar penalidade automática):`);
+    if(note===null)return;
+    if(!note.trim())return toast('Informe o motivo do warning.',true);
+    if(!confirm('Registrar o warning no histórico da organização?'))return;
+    try{await api(`/api/admin/events/${ev.id}/registrations/${r.id}/warnings`,{method:'POST',body:{note:note.trim()}});await loadLeagueEvents();toast('Warning registrado para a organização.');}
+    catch(err){toast(err.message,true)}
   }));
   $('eventRosterRows').querySelectorAll('[data-event-remove]').forEach(btn=>btn.addEventListener('click',async()=>{
     const registration=ev.registrations.find(x=>x.id===Number(btn.dataset.eventRemove));
@@ -700,23 +734,41 @@ function renderPublishedRounds(){
 function renderEventRounds(){
   const box=$('eventRoundsContent');if(!box)return;
   const ev=state.events.find(e=>e.id===state.selectedEventId);
-  if(!ev){box.innerHTML='<p class="muted-note">Selecione um evento para organizar suas rodadas.</p>';return;}
-  const eligible=ev.registrations.filter(r=>r.checkin&&r.paid);
-  const n=eligible.length;
-  const next=Math.max(1,...ev.rounds.map(r=>r.round_no))+ (ev.rounds.length?1:0);
-  box.innerHTML=`<div class="round-controls"><div><strong>${n} jogador(es) apto(s)</strong><p class="muted-note">Critério: check-in + pagamento. Decklist aprovada é um controle independente. Mesas: 3 ou 4 jogadores, sem bye.</p></div><form id="generateRoundForm" class="round-generate-form"><label>Rodada <input id="generateRoundNum" type="number" min="1" max="12" value="${Math.min(next,12)}" required></label><button class="button-primary" type="submit">Gerar pareamentos</button></form></div>
-    <div class="round-list">${ev.rounds.length?ev.rounds.map(r=>`<article class="round-admin-item"><div class="round-heading"><div><h3>Rodada ${r.round_no} <span class="round-status ${r.status==='published'?'published':'draft'}">${r.status==='published'?'● Publicada':'○ Rascunho'}</span></h3><p>${r.tables.length} mesa(s) · ${r.tables.reduce((sum,t)=>sum+t.players.length,0)} jogadores</p></div><div class="round-actions">${r.status==='draft'?`<button class="button-outline" data-round-publish="${r.round_no}">Publicar</button><button class="button-outline" data-round-regenerate="${r.round_no}">Regenerar</button><button class="event-remove" data-round-delete="${r.round_no}">Excluir</button>`:`<a class="button-outline" href="#/rounds/${safe(ev.rounds_share_token)}" target="_blank" rel="noopener noreferrer">Abrir link privado</a><button class="button-outline" data-round-unpublish="${r.round_no}">Despublicar</button>`}</div></div>
-    <div class="pairing-grid">${r.tables.map(t=>`<article class="pairing-card"><h4>Mesa ${t.table_no}</h4>${t.players.map(p=>`<div class="pairing-person"><strong>${safe(p.player_name)}</strong><small>${safe(p.tribe_name)}</small></div>`).join('')}</article>`).join('')}</div>
-    ${r.status==='draft'&&r.tables.length>1?`<form class="round-swap" data-round-swap="${r.round_no}"><strong>Trocar dois jogadores de mesa</strong><select aria-label="Jogador A" name="first" required><option value="">Primeiro jogador</option>${r.tables.flatMap(t=>t.players.map(p=>`<option value="${p.player_id}">${safe(p.player_name)} · Mesa ${t.table_no}</option>`)).join('')}</select><select name="second" aria-label="Jogador B" required><option value="">Segundo jogador</option>${r.tables.flatMap(t=>t.players.map(p=>`<option value="${p.player_id}">${safe(p.player_name)} · Mesa ${t.table_no}</option>`)).join('')}</select><button class="button-outline" type="submit">Trocar</button></form>`:''}
-    </article>`).join(''):'<p class="muted-note">Nenhuma rodada gerada neste evento.</p>'}</div>`;
+  if(!ev){box.innerHTML='<p class="muted-note">Selecione um evento na agenda.</p>';return;}
+  const rounds=[...ev.rounds].sort((a,b)=>a.round_no-b.round_no);
+  const unfinished=rounds.find(r=>r.status!=='finished');
+  const next=unfinished?.round_no||(rounds.length?rounds.at(-1).round_no+1:1);
+  const eligible=ev.registrations.filter(r=>r.checkin&&r.paid&&(r.dropped_after_round===null||r.dropped_after_round>=next));
+  const canGenerate=next<=12 && (!unfinished||unfinished.status==='draft');
+  box.innerHTML=`<div class="round-controls"><div><strong>${eligible.length} jogador(es) apto(s) para a rodada ${next}</strong><p class="muted-note">Participantes com check-in e pagamento, excluindo drops. Mesas de 3 ou 4, sem bye. Rodada seguinte somente após finalizar a anterior.</p></div>
+    <form id="generateRoundForm" class="round-generate-form"><label>Próxima rodada<input type="number" id="generateRoundNum" min="1" max="12" value="${next}" readonly></label>
+    <label>Modo<select id="generateRoundMode"><option value="auto">Automático: True Swiss → Swiss</option><option value="true_swiss">Somente True Swiss estrito</option><option value="swiss">Swiss (pontuação próxima)</option></select></label>
+    <button class="button-primary" type="submit" ${canGenerate?'':'disabled'}>${unfinished?.status==='draft'?'Regenerar rascunho':'Gerar pareamentos'}</button></form></div>
+    ${!canGenerate?'<p class="helper-panel">Finalize a rodada publicada antes de gerar a próxima. Uma rodada terminada não pode ser modificada.</p>':''}
+    <div class="round-list">${rounds.length?rounds.map(r=>{
+      const finished=r.status==='finished',published=r.status==='published';
+      const badge=finished?'✓ Finalizada':published?'● Publicada':'○ Rascunho';
+      return `<article class="round-admin-item"><div class="round-heading"><div><h3>Rodada ${r.round_no} <span class="round-status ${published?'published':finished?'finished':'draft'}">${badge}</span></h3>
+      <p>${r.tables.length} mesa(s) · ${r.tables.reduce((sum,t)=>sum+t.players.length,0)} jogador(es)</p>
+      <p class="muted-note"><strong>${r.pairing_mode==='true_swiss'?'True Swiss':r.pairing_mode==='swiss'?'Swiss':'Pareamento ajustado'}</strong> — ${safe(r.pairing_note||'')}</p></div>
+      <div class="round-actions">${finished?'<span class="round-status finished">Encerrada e despublicada</span>':published?
+        `<a class="button-outline" href="#/rounds/${safe(ev.rounds_share_token)}" target="_blank" rel="noopener noreferrer">Abrir link privado</a><button class="button-outline" data-round-unpublish="${r.round_no}">Despublicar</button><button class="button-primary" data-round-finish="${r.round_no}" ${r.all_approved?'':'disabled title="Aguarde a aprovação de todas as mesas"'}>Finalizar rodada</button>`:
+        `<button class="button-outline" data-round-publish="${r.round_no}">Publicar</button><button class="event-remove" data-round-delete="${r.round_no}">Excluir rascunho</button>`}</div></div>
+      <div class="pairing-grid">${r.tables.map(t=>`<article class="pairing-card"><h4>Mesa ${t.table_no}</h4><small class="${t.result_status==='approved'?'round-result-approved':'muted-note'}">${t.result_status==='approved'?'✓ Resultado aprovado':t.result_status==='pending'?'⏳ Aguardando aprovação':t.result_status==='rejected'?'✕ Resultado rejeitado':'○ Sem resultado aprovado'}</small>
+      ${t.players.map(p=>`<div class="pairing-person"><strong>${safe(p.player_name)}</strong><small>${safe(p.tribe_name)}${p.deck_name?' · '+safe(p.deck_name):''}</small></div>`).join('')}</article>`).join('')}</div>
+      ${!finished&&!published&&r.tables.length>1?`<form class="round-swap" data-round-swap="${r.round_no}"><strong>Trocar jogadores entre mesas</strong><select aria-label="Jogador A" name="first" required><option value="">Primeiro jogador</option>${r.tables.flatMap(t=>t.players.map(p=>`<option value="${p.player_id}">${safe(p.player_name)} · Mesa ${t.table_no}</option>`)).join('')}</select><select name="second" aria-label="Jogador B" required><option value="">Segundo jogador</option>${r.tables.flatMap(t=>t.players.map(p=>`<option value="${p.player_id}">${safe(p.player_name)} · Mesa ${t.table_no}</option>`)).join('')}</select><button class="button-outline" type="submit">Trocar</button></form>`:''}
+      </article>`}).join(''):'<p class="muted-note">Nenhuma rodada gerada neste evento.</p>'}</div>`;
   const endpoint=(n,extra='')=>`/api/admin/events/${ev.id}/rounds/${n}${extra}`;
   const submit=async(path,method,body,message)=>{try{await api(path,{method,body});await loadLeagueEvents();await loadPublishedRounds();toast(message)}catch(err){toast(err.message,true)}};
-  $('generateRoundForm').addEventListener('submit',e=>{e.preventDefault();const n=Number($('generateRoundNum').value);if(!confirm(`Gerar o pareamento da rodada ${n} com ${eligible.length} jogador(es) aptos?`))return;submit(endpoint(n),'POST',{},'Pareamento gerado em rascunho.')});
-  box.querySelectorAll('[data-round-publish]').forEach(b=>b.addEventListener('click',()=>{const n=Number(b.dataset.roundPublish);if(confirm(`Publicar a rodada ${n} para todos os jogadores?`))submit(endpoint(n),'PUT',{published:true},'Rodada publicada.')}));
-  box.querySelectorAll('[data-round-unpublish]').forEach(b=>b.addEventListener('click',()=>{const n=Number(b.dataset.roundUnpublish);if(confirm(`Retirar a rodada ${n} da visualização pública?`))submit(endpoint(n),'PUT',{published:false},'Rodada despublicada.')}));
-  box.querySelectorAll('[data-round-regenerate]').forEach(b=>b.addEventListener('click',()=>{const n=Number(b.dataset.roundRegenerate);if(confirm(`Apagar o rascunho atual da rodada ${n} e sortear novamente?`))submit(endpoint(n),'POST',{regenerate:true},'Pareamento regenerado.')}));
-  box.querySelectorAll('[data-round-delete]').forEach(b=>b.addEventListener('click',()=>{const n=Number(b.dataset.roundDelete);if(confirm(`Excluir permanentemente o rascunho da rodada ${n}?`))submit(endpoint(n),'DELETE',{},'Rascunho excluído.')}));
-  box.querySelectorAll('[data-round-swap]').forEach(form=>form.addEventListener('submit',e=>{e.preventDefault();const n=Number(form.dataset.roundSwap);submit(endpoint(n,'/swap'),'POST',{player_a:Number(form.elements.first.value),player_b:Number(form.elements.second.value)},'Jogadores trocados de mesa.')}));
+  $('generateRoundForm').addEventListener('submit',e=>{e.preventDefault();if(!canGenerate)return;
+    if(!confirm(`${unfinished?'Regenerar':'Gerar'} a rodada ${next} com ${eligible.length} jogadores aptos?`))return;
+    submit(endpoint(next),'POST',{mode:$('generateRoundMode').value,regenerate:Boolean(unfinished)},'Pareamento salvo como rascunho.');});
+  box.querySelectorAll('[data-round-publish]').forEach(b=>b.addEventListener('click',()=>{const n=Number(b.dataset.roundPublish);if(confirm(`Publicar a rodada ${n}?`))submit(endpoint(n),'PUT',{published:true},'Rodada publicada.')}));
+  box.querySelectorAll('[data-round-unpublish]').forEach(b=>b.addEventListener('click',()=>{const n=Number(b.dataset.roundUnpublish);if(confirm(`Despublicar a rodada ${n}?`))submit(endpoint(n),'PUT',{published:false},'Rodada despublicada.')}));
+  box.querySelectorAll('[data-round-finish]').forEach(b=>b.addEventListener('click',()=>{const n=Number(b.dataset.roundFinish);if(confirm(`Finalizar definitivamente a rodada ${n}? Todas as mesas devem estar aprovadas. Os pareamentos sairão do link público e a próxima rodada será liberada.`))submit(endpoint(n,'/finish'),'POST',{},`Rodada ${n} finalizada. Próxima rodada liberada.`)}));
+  box.querySelectorAll('[data-round-delete]').forEach(b=>b.addEventListener('click',()=>{const n=Number(b.dataset.roundDelete);if(confirm(`Excluir o rascunho ${n}?`))submit(endpoint(n),'DELETE',{},'Rascunho excluído.')}));
+  box.querySelectorAll('[data-round-swap]').forEach(form=>form.addEventListener('submit',e=>{e.preventDefault();const n=Number(form.dataset.roundSwap);submit(endpoint(n,'/swap'),'POST',{player_a:Number(form.elements.first.value),player_b:Number(form.elements.second.value)},'Jogadores trocados.')}));
+  syncSearchableSelects();
 }
 // Inscrições públicas: o site só exibe eventos abertos e nunca libera status administrativos.
 async function loadOpenEvents(redrawSignup=false){

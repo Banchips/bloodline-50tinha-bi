@@ -202,6 +202,22 @@ def init_db():
         if 'pairing_id' not in table_columns:
             db.execute('ALTER TABLE game_tables ADD COLUMN pairing_id INTEGER REFERENCES event_pairings(id) ON DELETE RESTRICT')
         db.execute('CREATE INDEX IF NOT EXISTS idx_tables_pairing ON game_tables(pairing_id,status)')
+        # v2.3.4: finalização como carimbo, sem reconstruir CHECK(status) de rodadas antigas.
+        round_cols={r['name'] for r in db.execute('PRAGMA table_info(event_rounds)')}
+        if 'finalized_at' not in round_cols:
+            db.execute('ALTER TABLE event_rounds ADD COLUMN finalized_at TEXT')
+        if 'pairing_mode' not in round_cols:
+            db.execute("ALTER TABLE event_rounds ADD COLUMN pairing_mode TEXT NOT NULL DEFAULT 'swiss'")
+        if 'pairing_note' not in round_cols:
+            db.execute("ALTER TABLE event_rounds ADD COLUMN pairing_note TEXT NOT NULL DEFAULT ''")
+        reg_cols={r['name'] for r in db.execute('PRAGMA table_info(event_registrations)')}
+        if 'dropped_after_round' not in reg_cols:
+            db.execute('ALTER TABLE event_registrations ADD COLUMN dropped_after_round INTEGER')
+        db.execute('''CREATE TABLE IF NOT EXISTS event_player_warnings (
+           id INTEGER PRIMARY KEY, event_id INTEGER NOT NULL REFERENCES league_events(id) ON DELETE CASCADE,
+           player_id INTEGER NOT NULL REFERENCES players(id), admin_id INTEGER REFERENCES admins(id) ON DELETE SET NULL,
+           note TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)''')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_event_warnings ON event_player_warnings(event_id,player_id)')
         # Contas dos participantes são permanentes, independentes de EPs.
         # As contas anteriores criadas manualmente continuam aprovadas.
         account_cols = {r['name'] for r in db.execute('PRAGMA table_info(player_accounts)')}
@@ -1043,7 +1059,7 @@ def list_league_events(db):
         FROM league_events e JOIN seasons s ON s.id=e.season_id
         ORDER BY e.event_date DESC,e.id DESC''')]
     registers = [dict(row) for row in db.execute('''
-        SELECT er.id,er.event_id,er.player_id,er.tribe_id,er.deck_id,er.checkin,er.paid,er.decklist_ok,
+        SELECT er.id,er.event_id,er.player_id,er.tribe_id,er.deck_id,er.checkin,er.paid,er.decklist_ok,er.dropped_after_round,
                er.registered_at,EXISTS(SELECT 1 FROM player_accounts pa WHERE pa.player_id=er.player_id AND pa.active=1) AS has_player_access,p.name AS player_name,t.name AS tribe_name,
                d.name AS deck_name,d.url AS deck_url
         FROM event_registrations er
@@ -1056,6 +1072,9 @@ def list_league_events(db):
         if row['event_id'] in grouped:
             grouped[row['event_id']].append(row)
     for ev in events:
+        ev['warnings']=[dict(w) for w in db.execute('''SELECT w.id,w.player_id,p.name AS player_name,w.note,w.created_at, a.username AS admin_name
+                   FROM event_player_warnings w JOIN players p ON p.id=w.player_id
+                   LEFT JOIN admins a ON a.id=w.admin_id WHERE w.event_id=? ORDER BY w.id DESC''',(ev['id'],))]
         ev['rounds'] = event_round_list(db, ev['id'])
         ev['registrations'] = grouped[ev['id']]
         ev['total_registered'] = len(ev['registrations'])
@@ -1069,8 +1088,8 @@ def list_league_events(db):
 def event_round_list(db, event_id, published_only=False):
     # Stable snapshots; public output excludes payment/check-in.
     where = ' AND r.status=\'published\'' if published_only else ''
-    rows = [dict(row) for row in db.execute('''SELECT r.id,r.event_id,r.round_no,r.status,
-                      r.created_at,r.published_at FROM event_rounds r
+    rows = [dict(row) for row in db.execute('''SELECT r.id,r.event_id,r.round_no,CASE WHEN r.finalized_at IS NOT NULL THEN 'finished' ELSE r.status END AS status,
+                      r.created_at,r.published_at,r.finalized_at,r.pairing_mode,r.pairing_note FROM event_rounds r
                       WHERE r.event_id=?'''+where+' ORDER BY r.round_no', (event_id,))]
     for rnd in rows:
         tables = [dict(t) for t in db.execute('''SELECT id,table_no FROM event_pairings
@@ -1084,6 +1103,13 @@ def event_round_list(db, event_id, published_only=False):
                     JOIN tribes t ON t.id=pp.tribe_id
                     LEFT JOIN decks d ON d.id=pp.deck_id
                     WHERE pp.pairing_id=? ORDER BY pp.id''',(table['id'],))]
+        for table in tables:
+            submissions=db.execute('''SELECT g.id,g.status FROM game_tables g WHERE g.pairing_id=? ORDER BY g.id DESC''',(table['id'],)).fetchall()
+            table['result_status']=submissions[0]['status'] if submissions else 'not_sent'
+            table['result_count']=len(submissions)
+            table['approved_count']=sum(r['status']=='approved' for r in submissions)
+            table['pending_count']=sum(r['status']=='pending' for r in submissions)
+        rnd['all_approved']=bool(tables) and all(t['approved_count']==1 and t['pending_count']==0 for t in tables)
         rnd['tables'] = tables
     return rows
 
@@ -1101,11 +1127,11 @@ def published_event_rounds(db, token):
     return data
 
 
-def event_eligible(db, event_id):
+def event_eligible(db, event_id, round_no=1):
     return [dict(row) for row in db.execute('''SELECT er.player_id,er.tribe_id,er.deck_id,p.name AS player_name
         FROM event_registrations er JOIN players p ON p.id=er.player_id
-        WHERE er.event_id=? AND er.checkin=1 AND er.paid=1
-        ORDER BY p.name COLLATE NOCASE''',(event_id,))]
+        WHERE er.event_id=? AND er.checkin=1 AND er.paid=1 AND (er.dropped_after_round IS NULL OR er.dropped_after_round>=?)
+        ORDER BY p.name COLLATE NOCASE''',(event_id,round_no))]
 
 
 def player_personal_results(db, player_id, season_arg='all'):
@@ -1159,7 +1185,9 @@ def player_assigned_rounds(db, player_id):
        JOIN league_events e ON e.id=rd.event_id
        JOIN seasons s ON s.id=e.season_id
        JOIN event_registrations reg ON reg.event_id=e.id AND reg.player_id=mine.player_id
-       WHERE mine.player_id=? ORDER BY e.event_date DESC,rd.round_no DESC''',(player_id,)).fetchall()
+       WHERE mine.player_id=? AND NOT EXISTS (SELECT 1 FROM game_tables done
+         WHERE done.pairing_id=pair.id AND done.status='approved')
+       ORDER BY e.event_date DESC,rd.round_no DESC''',(player_id,)).fetchall()
     for a in assignments:
         item=dict(a)
         item['players']=[dict(p) for p in db.execute('''SELECT pp.player_id,p.name AS player_name,t.name AS tribe_name
@@ -1189,6 +1217,8 @@ def event_player_points(db, ev, before_round):
 
 
 def pairing_sizes(n):
+    if n<3:
+        raise UserInputError('São necessários pelo menos 3 jogadores com check-in e pagamento para gerar uma rodada.')
     # Any n>=6 and n in (3,4) can be partitioned into 3/4 player tables,
     # except n=5. Minimize the number of 3-player tables.
     for threes in range(n//3+1):
@@ -1197,7 +1227,14 @@ def pairing_sizes(n):
     raise UserInputError('Não é possível distribuir esse total em mesas de 3 ou 4, sem bye. São necessários 3, 4 ou pelo menos 6 jogadores aptos (5 não é possível).')
 
 
-def choose_event_pairings(db, event, round_no, eligible):
+def choose_event_pairings(db, event, round_no, eligible, mode='auto'):
+    '''Multiplayer Swiss: strict homogeneous points/no rematch if feasible; otherwise best-effort pods.
+
+    'True Swiss' is a *Bloodline adaptation* for pods, not a certified FIDE/1v1 pairing.
+    Only approved results count; dropped users are filtered before calling this.
+    '''
+    if mode not in ('auto','true_swiss','swiss'):
+        raise UserInputError('Método de pareamento inválido.')
     sizes=pairing_sizes(len(eligible))
     pts=event_player_points(db,event,round_no)
     history=set()
@@ -1205,9 +1242,58 @@ def choose_event_pairings(db, event, round_no, eligible):
         FROM event_rounds r JOIN event_pairings t ON t.round_id=r.id
         JOIN event_pairing_players a ON a.pairing_id=t.id
         JOIN event_pairing_players b ON b.pairing_id=t.id AND a.player_id<b.player_id
-        WHERE r.event_id=? AND r.status='published' AND r.round_no<?''',(event['id'],round_no)):
+        WHERE r.event_id=? AND (r.status='published' OR r.finalized_at IS NOT NULL) AND r.round_no<?''',
+        (event['id'],round_no)):
         history.add((row['a'],row['b']))
-    rng=random.SystemRandom()
+    def collided(a,b):
+        return tuple(sorted((a['player_id'],b['player_id']))) in history
+    rng=random.Random(f"Bloodline:{event['id']}:{round_no}:{len(eligible)}")
+    groups_by_points={}
+    for p in eligible:
+        groups_by_points.setdefault(pts.get(p['player_id'],0),[]).append(p)
+    # Strict matching requires same approved-point group AND no prior shared pod.
+    # Exhaustive bounded backtracking for each score group (fast paths for round 1).
+    def strict_group(group):
+        if len(group)<3 or len(group)==5:return None
+        choices=pairing_sizes(len(group))
+        group=sorted(group,key=lambda x:x['player_id'])
+        rng.shuffle(group)
+        if not any(collided(a,b) for i,a in enumerate(group) for b in group[i+1:]):
+            result=[];idx=0
+            for size in choices:result.append(group[idx:idx+size]);idx+=size
+            return result
+        from itertools import combinations
+        # Search with iteration cap; if it fails the fallback can still find good pods.
+        budget=[20000]
+        def visit(remaining, sizes_left):
+            budget[0]-=1
+            if budget[0]<0:return None
+            if not sizes_left:return [] if not remaining else None
+            pivot=remaining[0]
+            for size in sorted(set(sizes_left),reverse=True):
+                if size>len(remaining):continue
+                for combo in combinations(remaining[1:],size-1):
+                    pod=(pivot,)+combo
+                    if any(collided(a,b) for i,a in enumerate(pod) for b in pod[i+1:]):continue
+                    ids={p['player_id'] for p in pod}
+                    rest=[x for x in remaining if x['player_id'] not in ids]
+                    next_sizes=list(sizes_left);next_sizes.remove(size)
+                    found=visit(rest,next_sizes)
+                    if found is not None:return [list(pod)]+found
+                    if budget[0]<0:return None
+            return None
+        return visit(group,choices)
+    if mode!='swiss':
+        strict=[]
+        for value in sorted(groups_by_points,reverse=True):
+            group=strict_group(groups_by_points[value])
+            if group is None:break
+            strict.extend(group)
+        else:
+            return strict,'true_swiss','Mesas com pontuação idêntica e sem adversários repetidos.'
+        if mode=='true_swiss':
+            raise UserInputError('True Swiss estrito não é possível com estes grupos de pontuação e histórico. Selecione Automático ou Swiss.')
+    # Fallback: Swiss pods, balance score delta and penalize repeat encounters.
     players=list(eligible)
     rng.shuffle(players)
     players.sort(key=lambda p:-pts.get(p['player_id'],0))
@@ -1221,51 +1307,65 @@ def choose_event_pairings(db, event, round_no, eligible):
         for group in groups:
             for i,a in enumerate(group):
                 for b in group[i+1:]:
-                    ids=tuple(sorted((a['player_id'],b['player_id'])))
-                    cost+=150 if ids in history else 0
-                    cost+=abs(pts.get(a['player_id'],0)-pts.get(b['player_id'],0))*4
+                    cost+=1000 if collided(a,b) else 0
+                    cost+=abs(pts.get(a['player_id'],0)-pts.get(b['player_id'],0))*12
         return cost
-    candidate=groups_from(players)
-    best_cost=score(candidate)
-    # Local swaps improve Swiss score proximity and avoid repeated opponents,
-    # without ever moving a player into two tables.
-    for _ in range(5):
-        changed=False
-        for a in range(len(candidate)):
-            for b in range(a+1,len(candidate)):
-                for i in range(len(candidate[a])):
-                    for j in range(len(candidate[b])):
-                        candidate[a][i],candidate[b][j]=candidate[b][j],candidate[a][i]
-                        value=score(candidate)
-                        if value<best_cost:
-                            best_cost=value;changed=True
-                        else:
+    best=None;best_score=float('inf')
+    for attempt in range(12 if len(players)<=40 else 3):
+        if attempt:
+            rng.shuffle(players)
+            players.sort(key=lambda p:(-pts.get(p['player_id'],0),rng.random()))
+        candidate=groups_from(players)
+        best_cost=score(candidate)
+        for _ in range(3):
+            changed=False
+            for a in range(len(candidate)):
+                for b in range(a+1,len(candidate)):
+                    for i in range(len(candidate[a])):
+                        for j in range(len(candidate[b])):
                             candidate[a][i],candidate[b][j]=candidate[b][j],candidate[a][i]
-        if not changed:break
-    return candidate
+                            value=score(candidate)
+                            if value<best_cost:
+                                best_cost=value;changed=True
+                            else:
+                                candidate[a][i],candidate[b][j]=candidate[b][j],candidate[a][i]
+            if not changed:break
+        if best_cost<best_score:
+            best_score=best_cost;best=[g[:] for g in candidate]
+    repeated=sum(collided(a,b) for group in best for i,a in enumerate(group) for b in group[i+1:])
+    note='Swiss por proximidade de pontos; ' + ('sem reencontros.' if repeated==0 else f'{repeated} par(es) de adversários repetidos, inevitáveis na otimização encontrada.')
+    if mode=='auto':note='True Swiss estrito inviável; '+note
+    return best,'swiss',note
 
 
-def generate_event_round(db, event_id, round_no, regenerate=False):
+def next_event_round_no(db,event_id):
+    rows=db.execute('SELECT round_no,finalized_at FROM event_rounds WHERE event_id=? ORDER BY round_no',(event_id,)).fetchall()
+    if not rows:return 1
+    unfinished=[r for r in rows if r['finalized_at'] is None]
+    if unfinished:return unfinished[0]['round_no']
+    return rows[-1]['round_no']+1
+
+
+def generate_event_round(db, event_id, round_no, regenerate=False, mode='auto'):
     ev=db.execute('SELECT * FROM league_events WHERE id=?',(event_id,)).fetchone()
     if not ev:raise UserInputError('Evento não encontrado.')
     if not (1<=round_no<=12):raise UserInputError('Número da rodada deve estar entre 1 e 12.')
+    expected=next_event_round_no(db,event_id)
+    if round_no!=expected:raise UserInputError(f'A próxima rodada permitida é a {expected}. Finalize a anterior antes de avançar.')
     existing=db.execute('SELECT * FROM event_rounds WHERE event_id=? AND round_no=?',(event_id,round_no)).fetchone()
-    if existing and existing['status']=='published':
-        raise UserInputError('Rodada publicada. Despublique antes de alterar os pareamentos.')
+    if existing and (existing['status']=='published' or existing['finalized_at']):
+        raise UserInputError('Rodada publicada ou finalizada não pode ser regenerada.')
     if existing and not regenerate:
         raise UserInputError('Rodada já gerada. Use Regenerar para substituir o rascunho.')
-    if existing and db.execute("SELECT 1 FROM event_rounds WHERE event_id=? AND round_no>? AND status='published'",(event_id,round_no)).fetchone():
-        raise UserInputError('Há uma rodada posterior publicada. Preserve os pareamentos anteriores.')
-    if round_no>1 and not db.execute("SELECT 1 FROM event_rounds WHERE event_id=? AND round_no=? AND status='published'",(event_id,round_no-1)).fetchone():
-        raise UserInputError('Publique primeiro a rodada anterior.')
-    eligible=event_eligible(db,event_id)
-    groups=choose_event_pairings(db,ev,round_no,eligible)
+    eligible=event_eligible(db,event_id,round_no)
+    groups,actual_mode,note=choose_event_pairings(db,ev,round_no,eligible,mode)
     if existing:
         if db.execute('''SELECT 1 FROM game_tables g JOIN event_pairings p ON p.id=g.pairing_id
                      WHERE p.round_id=? LIMIT 1''',(existing['id'],)).fetchone():
-            raise UserInputError('Este rascunho possui envios de resultados vinculados. Exclua-os na moderação antes de regenerar.')
+            raise UserInputError('Este rascunho possui resultados vinculados. Preserve o histórico.')
         db.execute('DELETE FROM event_rounds WHERE id=?',(existing['id'],))
-    rnd_id=db.execute('INSERT INTO event_rounds(event_id,round_no) VALUES (?,?)',(event_id,round_no)).lastrowid
+    rnd_id=db.execute('''INSERT INTO event_rounds(event_id,round_no,pairing_mode,pairing_note)
+      VALUES (?,?,?,?)''',(event_id,round_no,actual_mode,note)).lastrowid
     for index,group in enumerate(groups,1):
         pairing_id=db.execute('INSERT INTO event_pairings(round_id,table_no) VALUES (?,?)',(rnd_id,index)).lastrowid
         for player in group:
@@ -1274,9 +1374,32 @@ def generate_event_round(db, event_id, round_no, regenerate=False):
     return rnd_id
 
 
+def finalize_event_round(db,event_id,round_no):
+    rnd=db.execute('SELECT * FROM event_rounds WHERE event_id=? AND round_no=?',(event_id,round_no)).fetchone()
+    if not rnd:raise UserInputError('Rodada não encontrada.')
+    if rnd['finalized_at']:raise UserInputError('Rodada já finalizada.')
+    if rnd['status']!='published':raise UserInputError('Publique a rodada antes de finalizá-la.')
+    tables=db.execute('SELECT id FROM event_pairings WHERE round_id=?',(rnd['id'],)).fetchall()
+    if not tables:raise UserInputError('Rodada sem mesas.')
+    for t in tables:
+        submitted=db.execute('SELECT id,status FROM game_tables WHERE pairing_id=?',(t['id'],)).fetchall()
+        approved=[x for x in submitted if x['status']=='approved']
+        if len(approved)!=1 or any(x['status']=='pending' for x in submitted):
+            raise UserInputError('Todas as mesas precisam ter exatamente um resultado aprovado para finalizar a rodada.')
+        players=db.execute('SELECT player_id FROM event_pairing_players WHERE pairing_id=?',(t['id'],)).fetchall()
+        entries=db.execute('SELECT player_id FROM game_table_entries WHERE table_id=?',(approved[0]['id'],)).fetchall()
+        if sorted(r['player_id'] for r in players)!=sorted(r['player_id'] for r in entries):
+            raise UserInputError('Uma mesa aprovada não corresponde ao pareamento. Confira a moderação.')
+        match_count=db.execute('SELECT COUNT(*) AS n FROM matches WHERE table_id=?',(approved[0]['id'],)).fetchone()['n']
+        if match_count!=len(players):
+            raise UserInputError('A mesa foi aprovada, mas seus resultados oficiais estão incompletos. Revise antes de finalizar.')
+    db.execute("UPDATE event_rounds SET finalized_at=CURRENT_TIMESTAMP,status='draft' WHERE id=?",(rnd['id'],))
+
+
 def update_event_round_status(db,event_id,round_no,publish):
     rnd=db.execute('SELECT * FROM event_rounds WHERE event_id=? AND round_no=?',(event_id,round_no)).fetchone()
     if not rnd:raise UserInputError('Rodada não encontrada.')
+    if rnd['finalized_at']:raise UserInputError('Rodada finalizada é somente leitura.')
     new='published' if publish else 'draft'
     if not publish and db.execute('''SELECT 1 FROM game_tables g JOIN event_pairings p ON g.pairing_id=p.id
                              WHERE p.round_id=? AND g.status IN ('pending','approved')''',(rnd['id'],)).fetchone():
@@ -1293,7 +1416,7 @@ def update_event_round_status(db,event_id,round_no,publish):
 
 def swap_event_round_players(db,event_id,round_no,first,second):
     rnd=db.execute('SELECT * FROM event_rounds WHERE event_id=? AND round_no=?',(event_id,round_no)).fetchone()
-    if not rnd or rnd['status']!='draft':raise UserInputError('Somente rascunhos podem ser ajustados.')
+    if not rnd or rnd['status']!='draft' or rnd['finalized_at']:raise UserInputError('Somente rascunhos podem ser ajustados.')
     if first==second:raise UserInputError('Selecione dois jogadores diferentes.')
     rows=db.execute('''SELECT id,pairing_id,player_id FROM event_pairing_players
              WHERE round_id=? AND player_id IN (?,?)''',(rnd['id'],first,second)).fetchall()
@@ -1302,11 +1425,12 @@ def swap_event_round_players(db,event_id,round_no,first,second):
     if a['pairing_id']==b['pairing_id']:raise UserInputError('Os jogadores já estão na mesma mesa.')
     db.execute('UPDATE event_pairing_players SET pairing_id=? WHERE id=?',(b['pairing_id'],a['id']))
     db.execute('UPDATE event_pairing_players SET pairing_id=? WHERE id=?',(a['pairing_id'],b['id']))
+    db.execute("UPDATE event_rounds SET pairing_note=pairing_note || ' Ajuste manual de mesas.' WHERE id=?",(rnd['id'],))
 
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = 'BloodlineBI/2.3.3'
+    server_version = 'BloodlineBI/2.3.4'
 
     def log_message(self, fmt, *args):
         print('%s - %s' % (self.address_string(), fmt % args))
@@ -1916,11 +2040,39 @@ class Handler(BaseHTTPRequestHandler):
                     return self.respond(200,{'ok':True,'name':registration['name'],
                                             'player_id':registration['player_id'],
                                             'initial_password':new_password})
+                finish_route=re.fullmatch(r'/api/admin/events/(\d+)/rounds/(\d+)/finish',path)
+                if finish_route and method=='POST':
+                    event_id,round_no=map(int,finish_route.groups())
+                    finalize_event_round(db,event_id,round_no)
+                    db.commit()
+                    return self.respond(200,{'ok':True,'finished':True,'next_round':round_no+1})
+                drop_route=re.fullmatch(r'/api/admin/events/(\d+)/registrations/(\d+)/drop',path)
+                if drop_route and method=='POST':
+                    event_id,reg_id=map(int,drop_route.groups())
+                    reg=db.execute('SELECT id FROM event_registrations WHERE id=? AND event_id=?',(reg_id,event_id)).fetchone()
+                    if not reg:raise UserInputError('Inscrição não encontrada.')
+                    drop=obj.get('drop')
+                    if type(drop) is not bool:raise UserInputError('Informe drop como verdadeiro ou falso.')
+                    latest=db.execute('SELECT COALESCE(MAX(round_no),0) AS n FROM event_rounds WHERE event_id=?',(event_id,)).fetchone()['n']
+                    db.execute('UPDATE event_registrations SET dropped_after_round=? WHERE id=?',(latest if drop else None,reg_id))
+                    db.commit()
+                    return self.respond(200,{'ok':True,'dropped_after_round':latest if drop else None})
+                warn_route=re.fullmatch(r'/api/admin/events/(\d+)/registrations/(\d+)/warnings',path)
+                if warn_route and method=='POST':
+                    event_id,reg_id=map(int,warn_route.groups())
+                    reg=db.execute('SELECT player_id FROM event_registrations WHERE id=? AND event_id=?',(reg_id,event_id)).fetchone()
+                    if not reg:raise UserInputError('Inscrição não encontrada.')
+                    note=txt(obj.get('note'),'Motivo do warning',350)
+                    admin=self.current_admin()
+                    db.execute('INSERT INTO event_player_warnings(event_id,player_id,admin_id,note) VALUES (?,?,?,?)',
+                               (event_id,reg['player_id'],admin['id'],note))
+                    db.commit()
+                    return self.respond(201,{'ok':True})
                 round_route=re.fullmatch(r'/api/admin/events/(\d+)/rounds/(\d+)',path)
                 if round_route and method in ('POST','PUT','DELETE'):
                     event_id=int(round_route.group(1));round_no=int(round_route.group(2))
                     if method=='POST':
-                        rnd_id=generate_event_round(db,event_id,round_no,obj.get('regenerate') is True)
+                        rnd_id=generate_event_round(db,event_id,round_no,obj.get('regenerate') is True,obj.get('mode','auto'))
                         db.commit()
                         return self.respond(201,{'ok':True,'id':rnd_id})
                     if method=='PUT':
@@ -1931,6 +2083,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self.respond(200,{'ok':True})
                     rnd=db.execute('SELECT * FROM event_rounds WHERE event_id=? AND round_no=?',(event_id,round_no)).fetchone()
                     if not rnd:raise UserInputError('Rodada não encontrada.')
+                    if rnd['finalized_at']:raise UserInputError('Rodada finalizada não pode ser excluída.')
                     if rnd['status']=='published':raise UserInputError('Despublique antes de excluir a rodada.')
                     if db.execute('''SELECT 1 FROM game_tables g JOIN event_pairings p ON g.pairing_id=p.id
                                   WHERE p.round_id=? LIMIT 1''',(rnd['id'],)).fetchone():
@@ -2010,9 +2163,16 @@ class Handler(BaseHTTPRequestHandler):
                     if not found:
                         raise UserInputError('Inscrição não encontrada neste evento.')
                     if method == 'DELETE':
+                        if db.execute('''SELECT 1 FROM event_pairing_players pp JOIN event_rounds rnd ON rnd.id=pp.round_id
+                            WHERE rnd.event_id=? AND pp.player_id=? LIMIT 1''',(event_id,found['player_id'])).fetchone():
+                            raise UserInputError('Jogador já foi pareado. Use Dropar para preservá-lo no histórico.')
                         db.execute('DELETE FROM event_registrations WHERE id=?',(registration_id,))
                         db.commit()
                         return self.respond(200, {'ok':True})
+                    if 'tribe_id' in obj and db.execute('''SELECT 1 FROM event_pairing_players pp
+                      JOIN event_rounds rnd ON rnd.id=pp.round_id
+                      WHERE rnd.event_id=? AND pp.player_id=? LIMIT 1''',(event_id,found['player_id'])).fetchone():
+                        raise UserInputError('Tribo do jogador já pareado não pode ser alterada retroativamente.')
                     if 'tribe_id' in obj:
                         tribe_id = int_id(obj['tribe_id'],'Tribo')
                         if not exists(db,'tribes',tribe_id):
@@ -2047,6 +2207,10 @@ class Handler(BaseHTTPRequestHandler):
                 if table_match and method=='DELETE':
                     table_id=int(table_match.group(1))
                     if not exists(db,'game_tables',table_id):raise UserInputError('Mesa inexistente.')
+                    if db.execute('''SELECT 1 FROM game_tables g JOIN event_pairings pair ON pair.id=g.pairing_id
+                         JOIN event_rounds rnd ON rnd.id=pair.round_id
+                         WHERE g.id=? AND rnd.finalized_at IS NOT NULL''',(table_id,)).fetchone():
+                        raise UserInputError('Mesa de rodada finalizada não pode ser removida. Preserve o histórico oficial.')
                     db.execute('DELETE FROM matches WHERE table_id=?',(table_id,))
                     db.execute('DELETE FROM game_tables WHERE id=?',(table_id,))
                     db.commit()

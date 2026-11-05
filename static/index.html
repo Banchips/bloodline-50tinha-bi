@@ -11,7 +11,7 @@
 <body>
   <header class="topbar">
     <a class="brand" id="homeBrand" href="#/ranking" aria-label="Ir para o ranking"><div class="brand-symbol">B<span>50</span></div><div><strong>BLOODLINE</strong><small>50TINHA · INTELIGÊNCIA DA LIGA</small></div></a>
-    <div class="top-right"><span class="live"><span class="live-dot"></span> Ranking oficial da plataforma</span><a class="admin-access signup-nav hidden" id="signupNav" href="#/signup">✦ Inscrições abertas</a><a class="admin-access active-glow" id="playerAreaNav" href="#/my-area">♟ Área do jogador</a><a class="admin-access" id="decksNav" href="#/decks">▤ Decklists</a><a class="admin-access" id="adminNav" href="#/admin/review"><span aria-hidden="true">⚙</span> Administração</a></div>
+    <div class="top-right"><span class="live"><span class="live-dot"></span> Ranking oficial da plataforma</span><a class="admin-access signup-nav hidden" id="signupNav" href="#/signup">✦ Inscrições abertas</a><a class="admin-access active-glow" id="playerAreaNav" href="#/my-area">♟ Área do jogador</a><a class="admin-access" id="decksNav" href="#/decks">▤ Decklists</a><a class="admin-access" id="adminNav" href="#/admin/events"><span aria-hidden="true">⚙</span> Administração</a></div>
   </header>
   <main class="shell">
     <section id="publicPanel">
@@ -118,9 +118,10 @@
       <div class="admin-hero"><div><span class="kicker">ÁREA RESTRITA</span><h1>Centro de <em>controle.</em></h1><p>Gerencie eventos, participantes, temporadas e tribos da liga.</p></div><div class="admin-buttons"><a class="button-outline" id="adminBack" href="#/ranking">← Voltar ao painel</a><button class="button-outline hidden" id="logoutBtn">Sair da administração</button></div></div>
       <div id="loginBox" class="login-area panel"><h2>Acesso do administrador</h2><p>O painel público é livre. Para alterar dados, entre com sua conta administrativa individual.</p><form id="loginForm" class="inline-form"><input id="adminUsername" name="username" type="text" placeholder="Usuário" autocomplete="username" required maxlength="32"><input id="adminPassword" name="password" type="password" placeholder="Senha" autocomplete="current-password" required><button type="submit" class="button-primary">Entrar</button></form><p class="muted-note" id="adminConfigMessage"></p></div>
       <div id="adminContent" class="hidden"><div class="account-chip" id="adminIdentity"></div>
-        <div class="admin-tabs" role="tablist"><a class="admin-tab active" data-admin-tab="review" href="#/admin/review">Mesas para aprovar <span id="pendingCount" class="count-dot"></span></a><a class="admin-tab" data-admin-tab="events" href="#/admin/events">Eventos e inscrições</a><!-- Resultados: temporariamente ocultos; reabertura ocorrerá dentro de Eventos. --><a class="admin-tab" data-admin-tab="roster" href="#/admin/roster">Jogadores e temporadas</a><a class="admin-tab" data-admin-tab="eligibility" href="#/admin/eligibility">Tribos sem pontuação</a><a class="admin-tab" data-admin-tab="import" href="#/admin/import">Importar / exportar</a><a class="admin-tab" data-admin-tab="accounts" href="#/admin/accounts">Acessos</a></div>
-        <div class="admin-pane" id="pane-review"><section class="panel padded"><span class="kicker">MODERAÇÃO</span><h2>Mesas enviadas pelos jogadores</h2><p>Confira a composição, os decks, a vitória ou os empates. Somente mesas aprovadas entram na classificação.</p><div id="tableReviewList" class="review-list"></div></section></div>
-        <div class="admin-pane hidden" id="pane-events">
+        <div class="admin-tabs" role="tablist"><a class="admin-tab active" data-admin-tab="events" href="#/admin/events">Eventos e inscrições</a><a class="admin-tab" data-admin-tab="review" href="#/admin/review">Mesas para aprovar <span id="pendingCount" class="count-dot"></span></a><!-- Resultados: temporariamente ocultos; reabertura ocorrerá dentro de Eventos. --><a class="admin-tab" data-admin-tab="roster" href="#/admin/roster">Jogadores e temporadas</a><a class="admin-tab" data-admin-tab="eligibility" href="#/admin/eligibility">Tribos sem pontuação</a><a class="admin-tab" data-admin-tab="import" href="#/admin/import">Importar / exportar</a><a class="admin-tab" data-admin-tab="accounts" href="#/admin/accounts">Acessos</a></div>
+        <div class="admin-pane hidden" id="pane-review"><section class="panel padded"><span class="kicker">MODERAÇÃO</span><h2>Mesas enviadas pelos jogadores</h2><p>Confira a composição, os decks, a vitória ou os empates. Somente mesas aprovadas entram na classificação.</p><div id="tableReviewList" class="review-list"></div></section></div>
+        <div class="admin-pane" id="pane-events">
+          <div id="eventAgendaView">
           <div class="admin-layout event-layout">
             <section class="panel padded">
               <span class="kicker">ORGANIZAÇÃO DA LIGA</span>
@@ -137,9 +138,18 @@
             </section>
             <section class="panel padded">
               <span class="kicker">AGENDA</span><h2>Eventos cadastrados</h2>
+              <div class="event-filter-bar">
+                <label>Buscar pelo nome<input id="eventAgendaSearch" type="search" placeholder="Digite o nome do evento..."></label>
+                <label>Priorizar<select id="eventAgendaPrimary"><option value="date">Data</option><option value="season">Season</option></select></label>
+                <label>Data<select id="eventAgendaDate"><option value="desc">Recente → Antigo</option><option value="asc">Antigo → Recente</option></select></label>
+                <label>Season<select id="eventAgendaSeason"><option value="desc">Maior → Menor</option><option value="asc">Menor → Maior</option></select></label>
+              </div>
               <div id="eventList" class="event-list"></div>
             </section>
           </div>
+          </div><!-- /eventAgendaView -->
+          <div id="eventDetailView" class="hidden">
+            <div class="event-detail-nav"><a class="button-outline" href="#/admin/events">← Voltar à agenda</a><span>Gestão do evento selecionado</span></div>
           <section class="panel padded event-roster-panel">
             <div class="panel-heading event-heading"><div><span class="kicker">PRESENÇA E INSCRIÇÕES</span><h2 id="eventRosterTitle">Lista de jogadores</h2><p id="eventRosterSubtitle">Selecione um evento para cadastrar jogadores e conferir as marcações.</p></div><div id="eventRosterStats" class="event-mini-stats"></div></div>
             <div id="eventRosterContent" class="hidden">
@@ -154,8 +164,9 @@
           </section>
           <section class="panel padded event-rounds-panel">
             <div class="panel-heading"><div><span class="kicker">PAREAMENTO DO EVENTO</span><h2>Rodadas e mesas</h2><p>Somente jogadores com check-in e pagamento confirmados. Gere o rascunho, confira ou troque jogadores de mesa e publique quando estiver pronto.</p></div></div>
-            <div id="eventRoundsContent"><p class="muted-note">Selecione um evento acima para organizar suas rodadas.</p></div>
+            <div id="eventRoundsContent"><p class="muted-note">Selecione um evento para organizar suas rodadas.</p></div>
           </section>
+          </div><!-- /eventDetailView -->
         </div>
         <div class="admin-pane hidden" id="pane-results">
           <div class="admin-layout"><section class="panel padded"><div class="panel-heading"><div><span class="kicker">LANÇAMENTO</span><h2 id="matchFormTitle">Adicionar partida</h2></div></div>
