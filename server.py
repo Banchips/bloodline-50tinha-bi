@@ -202,6 +202,19 @@ def init_db():
         if 'pairing_id' not in table_columns:
             db.execute('ALTER TABLE game_tables ADD COLUMN pairing_id INTEGER REFERENCES event_pairings(id) ON DELETE RESTRICT')
         db.execute('CREATE INDEX IF NOT EXISTS idx_tables_pairing ON game_tables(pairing_id,status)')
+        # Contas dos participantes são permanentes, independentes de EPs.
+        # As contas anteriores criadas manualmente continuam aprovadas.
+        account_cols = {r['name'] for r in db.execute('PRAGMA table_info(player_accounts)')}
+        if 'username' not in account_cols:
+            db.execute('ALTER TABLE player_accounts ADD COLUMN username TEXT')
+        if 'approval_status' not in account_cols:
+            db.execute("ALTER TABLE player_accounts ADD COLUMN approval_status TEXT NOT NULL DEFAULT 'approved'")
+        if 'created_via' not in account_cols:
+            db.execute("ALTER TABLE player_accounts ADD COLUMN created_via TEXT NOT NULL DEFAULT 'admin'")
+        for row in db.execute("SELECT player_id FROM player_accounts WHERE username IS NULL OR username=''").fetchall():
+            db.execute('UPDATE player_accounts SET username=? WHERE player_id=?',
+                       ('jogador' + str(row['player_id']), row['player_id']))
+        db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_player_accounts_username ON player_accounts(username COLLATE NOCASE)')
         # As sessões antigas da v2.1 não estavam associadas a um usuário.
         # Invalidá-las ao migrar impede que cookies antigos deem acesso irrestrito.
         session_cols = {r['name'] for r in db.execute('PRAGMA table_info(sessions)')}
@@ -252,6 +265,36 @@ def password_matches(password, row):
         return hmac.compare_digest(candidate, bytes.fromhex(row['password_hash']))
     except (ValueError, TypeError):
         return False
+
+
+def register_player_account(db, username, password, player_id=None, player_name=None):
+    username = validate_username(username)
+    salt, digest, iters = password_digest(password)
+    if db.execute('SELECT 1 FROM player_accounts WHERE username=? COLLATE NOCASE', (username,)).fetchone():
+        raise UserInputError('Esse nome de usuário já está sendo utilizado.')
+    if player_id not in (None, ''):
+        pid = int_id(player_id, 'Jogador')
+        if not exists(db, 'players', pid):
+            raise UserInputError('Jogador não encontrado.')
+    else:
+        name = txt(player_name, 'Nome do jogador', 100)
+        if db.execute('SELECT 1 FROM players WHERE name=? COLLATE NOCASE', (name,)).fetchone():
+            raise UserInputError('Esse jogador já existe. Selecione seu nome na lista.')
+        pid = create_or_get(db, 'players', name)
+    if db.execute('SELECT 1 FROM player_accounts WHERE player_id=?', (pid,)).fetchone():
+        raise UserInputError('Esse jogador já possui uma conta. Fale com a organização se perdeu seu acesso.')
+    db.execute('''INSERT INTO player_accounts(player_id,username,password_salt,password_hash,
+                  password_iterations,active,approval_status,created_via) VALUES(?,?,?,?,?,0,'pending','self')''',
+               (pid,username,salt,digest,iters))
+    return pid
+
+
+def list_player_access_requests(db):
+    return [dict(r) for r in db.execute('''SELECT pa.player_id,p.name AS player_name,
+              pa.username,pa.approval_status,pa.created_at,pa.created_via,pa.active
+              FROM player_accounts pa JOIN players p ON p.id=pa.player_id
+              ORDER BY CASE WHEN pa.approval_status='pending' THEN 0 ELSE 1 END,
+              pa.created_at DESC,pa.player_id DESC''')]
 
 
 def create_admin(db, username, password, role='admin'):
@@ -1271,7 +1314,7 @@ class Handler(BaseHTTPRequestHandler):
             return db.execute('''SELECT p.id,p.name FROM player_sessions ps
                   JOIN player_accounts pa ON pa.player_id=ps.player_id
                   JOIN players p ON p.id=pa.player_id
-                  WHERE ps.token_hash=? AND ps.expires_at>? AND pa.active=1''',
+                  WHERE ps.token_hash=? AND ps.expires_at>? AND pa.active=1 AND pa.approval_status='approved' ''',
                   (hashed,int(time.time()))).fetchone()
 
     def authed(self):
@@ -1392,6 +1435,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self.respond(403,{'error':'Link privado de rodadas obrigatório.'})
                 with conn_db() as db:
                     return self.respond(200,{'events':published_event_rounds(db,token)})
+            if path == '/api/admin/player-accounts':
+                if not self.require_admin():return
+                with conn_db() as db:
+                    return self.respond(200,{'accounts':list_player_access_requests(db)})
             if path == '/api/player/session':
                 player=self.current_player()
                 return self.respond(200, {'player':bool(player), 'id':player['id'] if player else None,
@@ -1490,20 +1537,62 @@ class Handler(BaseHTTPRequestHandler):
     def write(self, method):
         try:
             path = urlparse(self.path).path
+            if path == '/api/player/register' and method == 'POST':
+                obj=self.read_json()
+                throttle_public(self.client_address[0], 'player_registration', 8)
+                with DB_LOCK,conn_db() as db:
+                    pid=register_player_account(db,obj.get('username'),obj.get('password'),
+                             obj.get('player_id'),obj.get('player_name'))
+                    db.commit()
+                return self.respond(201,{'ok':True,'player_id':pid,'status':'pending',
+                         'message':'Conta solicitada. Aguarde a confirmação da organização (somente uma vez).'} )
+            access_action=re.fullmatch(r'/api/admin/player-accounts/(\d+)/(approve|reject)',path)
+            if access_action and method=='POST':
+                if not self.require_admin():return
+                self.read_json()
+                pid=int(access_action.group(1)); action=access_action.group(2)
+                with DB_LOCK,conn_db() as db:
+                    account=db.execute('SELECT * FROM player_accounts WHERE player_id=?',(pid,)).fetchone()
+                    if not account or account['approval_status']!='pending':
+                        return self.respond(409,{'error':'Solicitação pendente não encontrada.'})
+                    if action=='approve':
+                        db.execute("UPDATE player_accounts SET active=1,approval_status='approved' WHERE player_id=?",(pid,))
+                    else:
+                        db.execute('DELETE FROM player_accounts WHERE player_id=?',(pid,))
+                    db.commit()
+                return self.respond(200,{'ok':True,'action':action})
             if path == '/api/player/login' and method == 'POST':
                 obj=self.read_json()
-                ip='player:'+self.client_address[0]
+                # Por usuário E IP: dezenas de participantes podem usar o mesmo Wi-Fi.
+                ip='player:'+self.client_address[0]+':'+str(obj.get('username') or obj.get('player_id') or '').casefold()
                 now=time.time()
                 with LOGIN_LOCK:
                     attempts=[t for t in LOGIN_ATTEMPTS.get(ip,[]) if now-t<900]
                     LOGIN_ATTEMPTS[ip]=attempts
                     if len(attempts)>=8:return self.respond(429,{'error':'Muitas tentativas. Tente novamente em 15 minutos.'})
                     attempts.append(now)
-                pid=int_id(obj.get('player_id'),'Jogador')
                 with DB_LOCK,conn_db() as db:
-                    account=db.execute('SELECT * FROM player_accounts WHERE player_id=? AND active=1',(pid,)).fetchone()
+                    if obj.get('username') not in (None,''):
+                        username=txt(obj.get('username'), 'Usuário', 100)
+                        # Compatibilidade: o nome do jogador também serve para contas antigas.
+                        account=db.execute('''SELECT pa.* FROM player_accounts pa
+                           JOIN players p ON p.id=pa.player_id
+                           WHERE pa.username=? COLLATE NOCASE OR p.name=? COLLATE NOCASE
+                           ORDER BY CASE WHEN pa.username=? COLLATE NOCASE THEN 0 ELSE 1 END LIMIT 1''',
+                           (username,username,username)).fetchone()
+                    elif obj.get('player_id') not in (None,''):
+                        # Compatibilidade da API da v2.3.0, não usada na nova interface.
+                        pid=int_id(obj.get('player_id'),'Jogador')
+                        account=db.execute('SELECT * FROM player_accounts WHERE player_id=?',(pid,)).fetchone()
+                    else:
+                        raise UserInputError('Informe seu nome de usuário.')
                     if not password_matches(obj.get('password',''),account):
-                        return self.respond(401,{'error':'Jogador ou senha incorretos. Solicite acesso à organização.'})
+                        return self.respond(401,{'error':'Usuário ou senha incorretos.'})
+                    if account['approval_status']=='pending':
+                        return self.respond(403,{'error':'Seu cadastro aguarda confirmação da organização.'})
+                    if not account['active'] or account['approval_status']!='approved':
+                        return self.respond(403,{'error':'Sua conta não está ativa. Procure a organização.'})
+                    pid=account['player_id']
                     db.execute('DELETE FROM player_sessions WHERE expires_at<?',(int(time.time()),))
                     token=secrets.token_hex(32)
                     db.execute('INSERT INTO player_sessions(token_hash,player_id,expires_at) VALUES(?,?,?)',
@@ -1577,6 +1666,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(201,{'ok':True,'status':'pending','id':tid})
             if path == '/api/events/register' and method == 'POST':
                 obj = self.read_json()
+                player=self.current_player()
+                if player is None:return self.respond(401,{'error':'Entre com sua conta de jogador aprovada para se inscrever.'})
+                # Nunca aceitar a identidade informada pelo navegador.
+                obj['player_id']=player['id']
                 event_id = int_id(obj.get('event_id'), 'Evento')
                 with DB_LOCK, conn_db() as db:
                     event = db.execute('SELECT id,registrations_open FROM league_events WHERE id=?',(event_id,)).fetchone()
@@ -1746,11 +1839,16 @@ class Handler(BaseHTTPRequestHandler):
                     if not registration:raise UserInputError('Inscrição não encontrada.')
                     new_password=secrets.token_urlsafe(16)
                     salt,digest,iters=password_digest(new_password)
-                    db.execute('''INSERT INTO player_accounts(player_id,password_salt,password_hash,password_iterations)
-                      VALUES(?,?,?,?) ON CONFLICT(player_id) DO UPDATE SET
+                    previous=db.execute('SELECT created_via FROM player_accounts WHERE player_id=?',
+                                        (registration['player_id'],)).fetchone()
+                    if previous and previous['created_via']=='self':
+                        return self.respond(409,{'error':'Este jogador gerencia a própria conta. Não gere uma nova senha.'})
+                    db.execute('''INSERT INTO player_accounts(player_id,username,password_salt,password_hash,
+                      password_iterations,active,approval_status,created_via)
+                      VALUES(?,?,?,?,?,1,'approved','admin') ON CONFLICT(player_id) DO UPDATE SET
                       password_salt=excluded.password_salt,password_hash=excluded.password_hash,
-                      password_iterations=excluded.password_iterations,active=1''',
-                      (registration['player_id'],salt,digest,iters))
+                      password_iterations=excluded.password_iterations,active=1,approval_status='approved' ''',
+                      (registration['player_id'],'jogador'+str(registration['player_id']),salt,digest,iters))
                     db.execute('DELETE FROM player_sessions WHERE player_id=?',(registration['player_id'],))
                     db.commit()
                     return self.respond(200,{'ok':True,'name':registration['name'],

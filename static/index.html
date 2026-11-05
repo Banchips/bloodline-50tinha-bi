@@ -40,20 +40,20 @@
       <div class="helper-panel">Os pareamentos não geram pontos. Os resultados entram no ranking somente quando aprovados pela administração.</div>
     </section>
     <section id="signupPanel" class="hidden">
-      <div class="admin-hero"><div><span class="kicker">LIGA BLOODLINE · INSCRIÇÕES</span><h1>Entre na <em>arena.</em></h1><p>Escolha seu jogador, a tribo e, se quiser, uma decklist já cadastrada.</p></div><a class="button-outline backPublic" href="#/ranking">← Voltar ao ranking</a></div>
+      <div class="admin-hero"><div><span class="kicker">LIGA BLOODLINE · INSCRIÇÕES</span><h1>Entre na <em>arena.</em></h1><p>Entre na sua conta, escolha a tribo e, se quiser, uma decklist já cadastrada.</p></div><a class="button-outline backPublic" href="#/ranking">← Voltar ao ranking</a></div>
       <div id="signupEventPicker" class="signup-event-picker"></div>
       <section class="panel padded signup-form-panel">
         <div class="section-intro"><span class="kicker">INSCRIÇÃO NO EVENTO</span><h2 id="signupEventTitle">Selecione um evento</h2><p id="signupEventInfo" class="muted-note"></p></div>
         <form id="signupForm" class="stack-form">
           <label>Nome do evento<input id="signupEventName" readonly aria-label="Nome do evento"></label>
-          <label>Player<select id="signupPlayer" required></select></label>
+          <label>Player<select id="signupPlayer" disabled required></select></label>
           <label>Tribo<select id="signupTribe" required></select></label>
           <label>Decklist (opcional)<select id="signupDeck"><option value="">Sem decklist</option></select></label>
           <p id="signupDeckInfo" class="muted-note"></p>
           <button type="submit" id="signupSubmit" class="button-primary">Confirmar inscrição</button>
         </form>
         <div id="signupMessage" role="status" aria-live="polite" class="import-summary"></div>
-        <div class="helper-panel">A inscrição não confirma presença, pagamento ou aprovação da decklist. Esses controles ficam com a organização. Depois de se inscrever, solicite sua senha de jogador à organização para acessar sua mesa.</div>
+        <div class="helper-panel" id="signupAccountNotice">Faça login com sua conta de jogador para se inscrever. <a href="#/my-area">Entrar ou criar conta</a>. A inscrição não confirma check-in, pagamento nem aprovação da decklist.</div>
       </section>
     </section>
     <section id="invitePanel" class="hidden">
@@ -75,10 +75,21 @@
       <section class="panel padded"><span class="kicker">CONFERÊNCIA</span><h2>Mesas aprovadas</h2><p>Somente resultados conferidos pela administração.</p><div class="table-history" id="tableHistory"></div></section>
     </section>
     <section id="playerAreaPanel" class="hidden">
-      <div class="admin-hero"><div><span class="kicker">ÁREA RESTRITA DO PARTICIPANTE</span><h1>Minha <em>mesa.</em></h1><p>Entre com o acesso entregue pela organização para consultar seu EP e enviar o resultado da sua mesa.</p></div><a class="button-outline" href="#/ranking">← Voltar ao ranking</a></div>
+      <div class="admin-hero"><div><span class="kicker">ÁREA DO PARTICIPANTE</span><h1>Minha <em>mesa.</em></h1><p>Crie seu próprio usuário e senha uma única vez. Depois, use essa conta em todos os eventos.</p></div><a class="button-outline" href="#/ranking">← Voltar ao ranking</a></div>
       <section id="playerLoginWrap" class="panel padded">
-        <span class="kicker">IDENTIFICAÇÃO</span><h2>Login do jogador</h2><p>Você precisa estar inscrito no evento e ter uma senha fornecida pela organização. Não use a senha de administrador.</p>
-        <form id="playerLoginForm" class="stack-form"><label>Jogador<select id="playerLoginId" required></select></label><label>Senha<input id="playerLoginPassword" type="password" autocomplete="current-password" required></label><button class="button-primary" type="submit">Entrar na minha mesa</button></form>
+        <span class="kicker">IDENTIFICAÇÃO</span><h2>Entrar na minha conta</h2><p>Use o nome de usuário e a senha que você cadastrou. Sua conta vale para todas as temporadas.</p>
+        <form id="playerLoginForm" class="stack-form"><label>Nome de usuário<input id="playerLoginUsername" autocomplete="username" required maxlength="100" placeholder="Ex.: alpha.mtg"></label><label>Senha<input id="playerLoginPassword" type="password" autocomplete="current-password" required></label><button class="button-primary" type="submit">Entrar na minha área</button></form>
+        <div class="account-register-card"><h3>Ainda não tem conta?</h3><p>Faça o cadastro uma única vez. Para proteger os perfis existentes, a organização confirma sua identidade antes do primeiro acesso.</p>
+          <form id="playerRegisterForm" class="stack-form">
+            <label>Seu jogador já aparece na liga?<select id="playerRegisterId"><option value="">Sou novo na liga</option></select></label>
+            <label id="playerRegisterNewNameWrap">Nome do jogador<input id="playerRegisterName" maxlength="100" placeholder="Seu nome na Bloodline"></label>
+            <label>Escolha seu usuário<input id="playerRegisterUsername" minlength="3" maxlength="32" pattern="[A-Za-z][A-Za-z0-9._-]{2,31}" autocomplete="username" placeholder="Ex.: alpha.mtg" required></label>
+            <label>Crie uma senha<input id="playerRegisterPassword" type="password" minlength="10" maxlength="256" autocomplete="new-password" required></label>
+            <label>Confirme a senha<input id="playerRegisterConfirm" type="password" minlength="10" maxlength="256" autocomplete="new-password" required></label>
+            <button class="button-outline" type="submit">Criar minha conta</button>
+          </form>
+          <div id="playerRegisterMessage" role="status" aria-live="polite" class="muted-note"></div>
+        </div>
       </section>
       <div id="playerDashboard" class="hidden">
         <section class="panel padded"><div class="player-portal-header"><div><span class="kicker">MINHA CONTA</span><h2 id="playerIdentity"></h2><p class="muted-note">Aparecem somente as mesas publicadas em que você participa. Os resultados exigem aprovação administrativa.</p></div><button type="button" id="playerLogoutBtn" class="button-outline">Sair da conta</button></div></section>
@@ -127,7 +138,7 @@
                 <label>Tribo<select id="eventTribe" required></select></label><label>Decklist (opcional)<select id="eventDeck"><option value="">Sem decklist</option></select></label>
                 <div class="form-actions"><button class="button-primary" type="submit">Adicionar jogador</button></div>
               </form>
-              <div id="playerAccessNotice" class="helper-panel hidden" aria-live="polite"></div><div class="table-scroller"><table class="event-roster-table"><thead><tr><th>JOGADOR</th><th>TRIBO</th><th>CHECK-IN</th><th>PAGAMENTO</th><th>DECKLIST</th><th>ACESSO</th><th>AÇÕES</th></tr></thead><tbody id="eventRosterRows"></tbody></table></div>
+              <div class="table-scroller"><table class="event-roster-table"><thead><tr><th>JOGADOR</th><th>TRIBO</th><th>CHECK-IN</th><th>PAGAMENTO</th><th>DECKLIST</th><th>ACESSO</th><th>AÇÕES</th></tr></thead><tbody id="eventRosterRows"></tbody></table></div>
               <p class="muted-note">Clique nos indicadores para alternar. ✓ = confirmado; — = pendente ou não aprovado. O status da decklist é marcado pela organização.</p>
             </div>
           </section>
@@ -144,7 +155,9 @@
             </form><p class="form-help">Cada lançamento representa um jogador em uma rodada. Para cadastrar uma mesa inteira, use a aba Enviar mesa, que aceita 3 ou 4 jogadores e valida o vencedor ou os empates.</p>
           </section><section class="panel padded"><div class="panel-heading"><div><span class="kicker">CONFERÊNCIA</span><h2>Resultados cadastrados</h2></div><input type="search" id="adminMatchSearch" placeholder="Buscar no histórico..." aria-label="Buscar resultados administrativos"></div><div class="admin-match-list" id="adminMatchList"></div></section></div>
         </div>
-        <div class="admin-pane hidden" id="pane-roster"><div class="three-grid">
+        <div class="admin-pane hidden" id="pane-roster">
+          <section class="panel padded access-approval-panel"><span class="kicker">CONTAS CRIADAS PELOS JOGADORES</span><h2>Confirmar identidade dos participantes</h2><p>O jogador escolhe usuário e senha. Confira se o cadastro corresponde ao participante real e aprove uma única vez, não a cada evento.</p><div id="playerAccessRequests" class="manager-list"></div></section>
+          <div class="three-grid">
           <section class="panel padded"><span class="kicker">ORGANIZAÇÃO</span><h2>Temporadas</h2><form id="seasonForm" class="stack-form"><input id="newSeason" placeholder="Ex.: S7 · 2026" maxlength="100" required><button class="button-primary">Criar temporada</button></form><div id="seasonManager" class="manager-list"></div></section>
           <section class="panel padded"><span class="kicker">PARTICIPANTES</span><h2>Jogadores</h2><form id="playerForm" class="stack-form"><input id="newPlayer" placeholder="Nome do jogador" maxlength="100" required><button class="button-primary">Cadastrar jogador</button></form><div id="playerManager" class="manager-list"></div></section>
           <section class="panel padded"><span class="kicker">METAGAME</span><h2>Tribos</h2><form id="tribeForm" class="stack-form"><input id="newTribe" placeholder="Nome da tribo" maxlength="100" required><button class="button-primary">Cadastrar tribo</button></form><div id="tribeManager" class="manager-list"></div></section>

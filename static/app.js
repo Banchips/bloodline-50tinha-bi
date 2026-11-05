@@ -130,7 +130,7 @@ function showPanelNow(name,scroll=true){
   if((name==='admin'||name==='invite')&&!state.sessionChecked&&!state.sessionLoading)refreshAdminSession();
   if(name==='table'&&previous!=='table'){refreshPlayerForms();loadTables();}
   if(name==='decks'&&previous!=='decks'){refreshPlayerForms();renderDeckGallery();}
-  if(name==='signup'&&previous!=='signup')loadOpenEvents(true);
+  if(name==='signup'&&previous!=='signup'){refreshPlayerSession();loadOpenEvents(true);}
   if(name==='rounds'&&previous!=='rounds')loadPublishedRounds(state.roundShareToken);
   if(name==='playerArea'&&previous!=='playerArea')refreshPlayerSession();
 }
@@ -201,6 +201,7 @@ async function refreshAdminSession(){
    $('logoutBtn').classList.toggle('hidden',!d.admin);
    $('ownerAdminSection').classList.toggle('hidden',!state.canManageAdmins);
    $('restoreDbSection').classList.toggle('hidden',!state.canManageAdmins);
+   if(d.admin)refreshPlayerAccessRequests();
    $('adminIdentity').textContent=d.admin?`Conectado como ${d.username} · ${state.canManageAdmins?'Conta principal':'Administrador'}`:'';
    $('adminConfigMessage').textContent=d.admin_configured?'':'Conta principal não configurada. Execute o sistema pelo terminal para criar o primeiro usuário.';
    if(d.admin){await loadAdmin();await loadLeagueEvents();if(state.canManageAdmins)await loadAdminUsers()}
@@ -301,7 +302,7 @@ function editMatch(id){const m=state.admin.all_matches.find(x=>x.id===id);if(!m)
 function resetMatchForm(){state.editing=null;$('matchForm').reset();$('matchFormTitle').textContent='Adicionar partida';$('saveMatch').textContent='Salvar resultado';$('cancelEdit').classList.add('hidden');$('mSeason').value=state.season!=='all'?state.season:String(state.admin?.master.seasons.at(-1)?.id||'');{const now=new Date(); $('mDate').value=fmtDate(today())}}
 async function deleteMatch(id){if(!confirm(`Excluir a partida #${id}? Essa ação não pode ser desfeita.`))return;try{await api(`/api/matches/${id}`,{method:'DELETE',body:{}});toast('Partida excluída.');if(state.editing===id)resetMatchForm();await reloadAll()}catch(err){toast(err.message,true)}}
 async function reloadAll(){await loadPublic(false);await loadAdmin()}
-function switchAdminTab(tab,updateUrl=true){if(updateUrl){navigateTo('#/admin/'+tab);return;}document.querySelectorAll('.admin-tab').forEach(e=>{e.classList.toggle('active',e.dataset.adminTab===tab);if(e.dataset.adminTab===tab)e.setAttribute('aria-current','page');else e.removeAttribute('aria-current')});document.querySelectorAll('.admin-pane').forEach(e=>e.classList.toggle('hidden',e.id!=='pane-'+tab))}
+function switchAdminTab(tab,updateUrl=true){if(updateUrl){navigateTo('#/admin/'+tab);return;}document.querySelectorAll('.admin-tab').forEach(e=>{e.classList.toggle('active',e.dataset.adminTab===tab);if(e.dataset.adminTab===tab)e.setAttribute('aria-current','page');else e.removeAttribute('aria-current')});document.querySelectorAll('.admin-pane').forEach(e=>e.classList.toggle('hidden',e.id!=='pane-'+tab));if(tab==='roster' && state.loggedIn)refreshPlayerAccessRequests();}
 async function downloadEndpoint(path,filename){try{const r=await fetch(path,{credentials:'same-origin'});if(!r.ok)throw new Error('Não autorizado ou exportação indisponível.');const blob=await r.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Arquivo exportado.')}catch(err){toast(err.message,true)}}
 
 function today(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
@@ -541,24 +542,9 @@ function renderEventRoster(){
     <td><button type="button" class="event-toggle ${r.checkin?'on':''}" data-event-toggle="${r.id}" data-field="checkin" aria-pressed="${Boolean(r.checkin)}" title="${r.checkin?'Check-in confirmado':'Check-in pendente'}"><span aria-hidden="true">${r.checkin?'✓':'○'}</span><small>${r.checkin?'Feito':'Pendente'}</small></button></td>
     <td><button type="button" class="event-toggle ${r.paid?'on':''}" data-event-toggle="${r.id}" data-field="paid" aria-pressed="${Boolean(r.paid)}" title="${r.paid?'Pagamento confirmado':'Pagamento pendente'}"><span aria-hidden="true">${r.paid?'✓':'○'}</span><small>${r.paid?'Pago':'Pendente'}</small></button></td>
     <td><button type="button" class="event-toggle ${r.decklist_ok?'on':''}" data-event-toggle="${r.id}" data-field="decklist_ok" aria-pressed="${Boolean(r.decklist_ok)}" title="${r.decklist_ok?'Decklist aprovada':'Decklist ainda não aprovada'}"><span aria-hidden="true">${r.decklist_ok?'✓':'✕'}</span><small>${r.decklist_ok?'OK':'Não'}</small></button></td>
-    <td><button type="button" class="button-outline" data-player-access="${r.id}">${r.has_player_access?'Redefinir senha':'Criar login'}</button></td>
+    <td><span class="muted-note">${r.has_player_access?'Conta registrada':'Cadastro próprio'}</span></td>
     <td><button type="button" class="event-remove" data-event-remove="${r.id}" aria-label="Remover ${safe(r.player_name)} deste evento">Remover</button></td>
   </tr>`).join(''):'<tr><td class="empty" colspan="7">Nenhum jogador inscrito neste evento.</td></tr>';
-  $('eventRosterRows').querySelectorAll('[data-player-access]').forEach(btn=>btn.addEventListener('click',async()=>{
-    const reg=ev.registrations.find(r=>r.id===Number(btn.dataset.playerAccess));
-    if(!reg)return;
-    if(!confirm(`${reg.has_player_access?'Redefinir':'Criar'} a senha de ${reg.player_name}? Caso já exista, a senha antiga e as sessões serão invalidadas.`))return;
-    btn.disabled=true;
-    try{
-      const data=await api(`/api/admin/events/${ev.id}/registrations/${reg.id}/access`,{method:'POST',body:{}});
-      const text=`Jogador: ${data.name}\nSenha temporária: ${data.initial_password}\nSite: ${location.origin}/#/my-area`;
-      $('playerAccessNotice').innerHTML=`<strong>Acesso de ${safe(data.name)} — copie e entregue somente ao jogador</strong><p><code>${safe(data.initial_password)}</code></p><button type="button" class="button-outline" id="copyPlayerAccess">Copiar dados de acesso</button> <button type="button" class="button-outline" id="hidePlayerAccess">Ocultar senha</button>`;
-      $('playerAccessNotice').classList.remove('hidden');
-      $('copyPlayerAccess').addEventListener('click',()=>navigator.clipboard.writeText(text).then(()=>toast('Dados copiados. Envie em privado.')).catch(()=>toast('Selecione a senha e copie manualmente.',true)));
-      $('hidePlayerAccess').addEventListener('click',()=>{$('playerAccessNotice').classList.add('hidden');$('playerAccessNotice').textContent='';});
-      await loadLeagueEvents();toast('Acesso gerado. Compartilhe a senha em privado.');
-    }catch(err){toast(err.message,true);btn.disabled=false}
-  }));
   $('eventRosterRows').querySelectorAll('[data-event-toggle]').forEach(btn=>btn.addEventListener('click',async()=>{
     const registration=ev.registrations.find(x=>x.id===Number(btn.dataset.eventToggle));if(!registration)return;
     const field=btn.dataset.field;
@@ -646,7 +632,8 @@ function renderSignupForm(){
   $('signupEventPicker').innerHTML=(events.length>1 || (events.length && !events.some(e=>e.id===state.selectedSignupEventId)))?events.map(e=>`<a href="#/signup/${e.id}" data-public-event="${e.id}" class="event-picker-item ${e.id===state.selectedSignupEventId?'selected':''}"><strong>${safe(e.name)}</strong><small>${safe(e.season_name)} · ${safe(e.episode)} · ${fmtDate(e.event_date)}</small></a>`).join(''):'';
 
   const enabled=Boolean(current);
-  $('signupForm').classList.toggle('hidden',!enabled);
+  $('signupForm').classList.toggle('hidden',!enabled || !state.playerSession?.player);
+  $('signupAccountNotice').innerHTML=state.playerSession?.player?'Você está entrando como <strong>'+safe(state.playerSession.name)+'</strong>. Sua inscrição ficará vinculada automaticamente a essa conta.':'Para se inscrever, <a href="#/my-area">entre na conta ou cadastre seu usuário</a> primeiro.';
   $('signupEventTitle').textContent=current?current.name:'Inscrições encerradas';
   $('signupEventInfo').textContent=current?`${current.season_name} · ${current.episode} · ${fmtDate(current.event_date)}`:'Este evento não está com inscrições abertas. Consulte a organização ou selecione outro EP disponível.';
   if(current){$('signupEventName').value=current.name;updateSignupOptions();}
@@ -654,8 +641,8 @@ function renderSignupForm(){
 function updateSignupOptions(){
   const m=state.public;
   if(!m)return;
-  const player=$('signupPlayer').value,tribe=$('signupTribe').value;
-  $('signupPlayer').innerHTML=selectOptions(m.players||[],player,'Selecione seu jogador');
+  const player=String(state.playerSession?.id||''),tribe=$('signupTribe').value;
+  $('signupPlayer').innerHTML=selectOptions((m.players||[]).filter(p=>p.id===Number(player)),player,'Entre na sua conta');
   $('signupTribe').innerHTML=selectOptions(m.tribes||[],tribe,'Selecione a tribo');
   updateSignupDecks();
 }
@@ -678,11 +665,11 @@ async function submitSignup(e){
   const btn=$('signupSubmit');btn.disabled=true;
   $('signupMessage').textContent='Enviando inscrição...';
   try{
-    await api('/api/events/register',{method:'POST',body:{event_id:ev.id,player_id:Number($('signupPlayer').value),tribe_id:Number($('signupTribe').value),deck_id:$('signupDeck').value||null}});
+    await api('/api/events/register',{method:'POST',body:{event_id:ev.id,tribe_id:Number($('signupTribe').value),deck_id:$('signupDeck').value||null}});
     $('signupMessage').textContent=`✓ Inscrição recebida para ${ev.name}! Procure a organização para confirmar check-in, pagamento e aprovação da decklist.`;
     toast('Inscrição enviada com sucesso!');
-    $('signupPlayer').value='';$('signupTribe').value='';updateSignupDecks();await loadOpenEvents();
-    toast('Inscrição recebida. Para acessar a mesa, peça sua senha à organização.');
+    $('signupTribe').value='';updateSignupDecks();await loadOpenEvents();
+    toast('Inscrição recebida. Você já pode usar sua própria conta para acessar a mesa.');
     navigateTo('#/my-area');
   }catch(err){ $('signupMessage').textContent='Não foi possível inscrever: '+err.message;toast(err.message,true); }
   finally{btn.disabled=false}
@@ -714,7 +701,9 @@ async function refreshPlayerSession(){
     const current=await api('/api/player/session');state.playerSession=current.player?current:null;
     $('playerLoginWrap').classList.toggle('hidden',Boolean(current.player));
     $('playerDashboard').classList.toggle('hidden',!current.player);
-    $('playerLoginId').innerHTML=selectOptions(getRegisteredPlayers(),$('playerLoginId').value,'Selecione seu jogador');
+    $('playerRegisterId').innerHTML='<option value="">Sou novo na liga</option>'+getRegisteredPlayers().map(p=>`<option value="${p.id}">${safe(p.name)}</option>`).join('');
+    $('playerRegisterNewNameWrap').classList.toggle('hidden',Boolean($('playerRegisterId').value));
+    if(state.currentPanel==='signup')renderSignupForm();
     if(current.player){$('playerIdentity').textContent=current.name;await refreshPlayerRounds();}
     else {$('playerRoundsList').innerHTML='';state.playerRounds=[];}
   }catch(err){toast(err.message,true)}
@@ -743,6 +732,25 @@ function renderMyRounds(){
     catch(err){toast(err.message,true)}
   }));
 }
+async function refreshPlayerAccessRequests(){
+  try{
+    const data=await api('/api/admin/player-accounts');
+    const items=(data.accounts||[]).filter(a=>a.approval_status==='pending');
+    const box=$('playerAccessRequests');
+    if(!box)return;
+    box.innerHTML=items.length?items.map(a=>`<div class="access-request-row">
+       <div><strong>${safe(a.player_name)}</strong><small>Usuário: ${safe(a.username)} · Solicitado em ${fmtDateTime(a.created_at)}</small></div>
+       <div class="access-request-actions"><button type="button" class="button-primary" data-access-approve="${a.player_id}">Aprovar</button>
+       <button type="button" class="event-remove" data-access-reject="${a.player_id}">Recusar</button></div></div>`).join(''):'<p class="muted-note">Nenhuma solicitação de acesso pendente.</p>';
+    box.querySelectorAll('[data-access-approve],[data-access-reject]').forEach(button=>button.addEventListener('click',async()=>{
+      const action=button.dataset.accessApprove?'approve':'reject',pid=Number(button.dataset.accessApprove||button.dataset.accessReject);
+      const entry=items.find(x=>x.player_id===pid);
+      if(!entry||!confirm(`${action==='approve'?'Confirmar a identidade de':'Recusar o cadastro de'} ${entry.player_name}?`))return;
+      try{button.disabled=true;await api(`/api/admin/player-accounts/${pid}/${action}`,{method:'POST',body:{}});toast(action==='approve'?'Jogador autorizado.':'Solicitação recusada.');await refreshPlayerAccessRequests();await loadLeagueEvents();}
+      catch(err){button.disabled=false;toast(err.message,true)}
+    }));
+  }catch(err){if($('playerAccessRequests'))$('playerAccessRequests').textContent='Falha ao carregar solicitações: '+err.message;}
+}
 function bindEvents(){
  window.addEventListener('hashchange',()=>applyRoute(true));
  $('seasonSelect').addEventListener('change',e=>{state.season=e.target.value;loadPublic()});
@@ -751,9 +759,25 @@ function bindEvents(){
  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('detailOverlay').classList.contains('hidden'))navigateTo('#/ranking')});
  $('playerLoginForm').addEventListener('submit',async e=>{
    e.preventDefault();try{
-     await api('/api/player/login',{method:'POST',body:{player_id:Number($('playerLoginId').value),password:$('playerLoginPassword').value}});
+     await api('/api/player/login',{method:'POST',body:{username:$('playerLoginUsername').value.trim(),password:$('playerLoginPassword').value}});
      $('playerLoginPassword').value='';toast('Bem-vindo à sua área de jogador.');await refreshPlayerSession();
    }catch(err){toast(err.message,true)}
+ });
+ $('playerRegisterId').addEventListener('change',()=>{$('playerRegisterNewNameWrap').classList.toggle('hidden',Boolean($('playerRegisterId').value));});
+ $('playerRegisterForm').addEventListener('submit',async e=>{
+   e.preventDefault();
+   const pw=$('playerRegisterPassword').value;
+   if(pw!==$('playerRegisterConfirm').value)return toast('As senhas não coincidem.',true);
+   try{
+     const body={username:$('playerRegisterUsername').value.trim(),password:pw};
+     if($('playerRegisterId').value)body.player_id=Number($('playerRegisterId').value);
+     else body.player_name=$('playerRegisterName').value.trim();
+     const response=await api('/api/player/register',{method:'POST',body});
+     $('playerRegisterForm').reset();$('playerRegisterNewNameWrap').classList.remove('hidden');
+     $('playerRegisterMessage').textContent=response.message;
+     toast('Cadastro enviado. Confirmação necessária apenas no primeiro acesso.');
+     await loadPublic();
+   }catch(err){$('playerRegisterMessage').textContent=err.message;toast(err.message,true)}
  });
  $('playerLogoutBtn').addEventListener('click',async()=>{try{await api('/api/player/logout',{method:'POST',body:{}});state.playerSession=null;await refreshPlayerSession();toast('Você saiu da sua conta.')}catch(err){toast(err.message,true)}});
  $('playerPasswordForm').addEventListener('submit',async e=>{e.preventDefault();try{
@@ -879,5 +903,5 @@ applyRoute(false);
 loadPublic(true).then(()=>{
   resetMatchForm();resetTable();repopulateTableSlots();
   applyRoute(false);
-  if(state.currentPanel==='playerArea')refreshPlayerSession();
+   if(state.currentPanel==='playerArea'||state.currentPanel==='signup')refreshPlayerSession();
 });
