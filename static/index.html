@@ -145,11 +145,18 @@
                 <label>Season<select id="eventAgendaSeason"><option value="desc">Maior → Menor</option><option value="asc">Menor → Maior</option></select></label>
               </div>
               <div id="eventList" class="event-list"></div>
+              <div class="result-cleanup-section hidden" id="resultCleanupSection">
+                <div class="result-cleanup-heading"><span class="kicker">CONTA PRINCIPAL</span><h3>Gerenciar resultados de teste</h3></div>
+                <p class="muted-note">Exclua resultados de um EP que já tenha sido encerrado ou removido da agenda. Confira a temporada, a data, o episódio e a quantidade de partidas antes de apagar.</p>
+                <a class="button-outline" id="downloadFullDatabase" href="/api/admin/download-database">↓ Baixar backup completo (.db)</a>
+                <button class="button-outline" type="button" id="refreshResultGroups">Atualizar lista de resultados</button>
+                <div class="result-cleanup-list" id="resultGroupList"></div>
+              </div>
             </section>
           </div>
           </div><!-- /eventAgendaView -->
           <div id="eventDetailView" class="hidden">
-            <div class="event-detail-nav"><a class="button-outline" href="#/admin/events">← Voltar à agenda</a><span>Gestão do evento selecionado</span></div>
+            <div class="event-detail-nav"><a class="button-outline" href="#/admin/events">← Voltar à agenda</a><div class="event-detail-nav-actions"><span>Gestão do evento selecionado</span><button class="event-delete-btn hidden" type="button" id="eventDetailDelete" title="Remove o evento encerrado da agenda sem apagar pontos">Excluir evento encerrado</button></div></div>
           <section class="panel padded event-roster-panel">
             <div class="panel-heading event-heading"><div><span class="kicker">PRESENÇA E INSCRIÇÕES</span><h2 id="eventRosterTitle">Lista de jogadores</h2><p id="eventRosterSubtitle">Selecione um evento para cadastrar jogadores e conferir as marcações.</p></div><div id="eventRosterStats" class="event-mini-stats"></div></div>
             <div id="eventRosterContent" class="hidden">

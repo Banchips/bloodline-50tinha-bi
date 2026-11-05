@@ -262,3 +262,74 @@ a:focus-visible{outline:2px solid var(--lime);outline-offset:3px}
 .event-close-button:hover:not(:disabled){background:#67323e}
 .event-close-button:disabled{opacity:.48;cursor:not-allowed}
 .event-status-closed{border:1px solid #7d9954;background:#2e3a2a;color:#d9f4ab;border-radius:9px;padding:9px 11px;font-weight:800}
+
+/* v2.3.6 — filtros alinhados ao visual do painel, sem overflow. */
+.event-filter-bar{
+  display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:11px;
+  align-items:stretch;margin:20px 0 24px;
+}
+.event-filter-bar>label{
+  display:flex;flex-direction:column;gap:7px;min-width:0;
+  padding:12px 13px 11px;background:linear-gradient(150deg,#1c2a40,#131d30);
+  border:1px solid #3b506a;border-radius:13px;
+  color:#b5c6dc;font-size:10px;font-weight:850;letter-spacing:.5px;
+  transition:background .16s,border-color .16s,box-shadow .16s;
+}
+.event-filter-bar>label:first-child{grid-column:1/-1}
+.event-filter-bar>label:focus-within{border-color:#b7e56a;box-shadow:0 0 0 3px rgba(198,239,80,.12);background:#1e2a3d}
+.event-filter-bar input,.event-filter-bar select{
+  width:100%;height:34px;min-height:34px!important;padding:4px 27px 4px 0!important;
+  font-size:13px;font-weight:700;letter-spacing:0;color:#f1f6ff;
+  border:0!important;border-radius:0;background:transparent!important;
+  box-shadow:none!important;outline:0!important;
+}
+.event-filter-bar input:focus,.event-filter-bar select:focus{outline:0!important;box-shadow:none!important}
+.event-filter-bar input::placeholder{color:#8295b0;font-size:12px}
+.event-filter-bar select{
+  appearance:none!important;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23bed3e3' stroke-width='2.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")!important;
+  background-position:right 1px center!important;background-repeat:no-repeat!important;
+  cursor:pointer;color-scheme:dark;
+}
+.event-filter-bar select option,.round-generate-form select option{background:#172238;color:#f1f6ff}
+/* Dentro do evento: campo de modo suíço, número da rodada e troca de jogadores. */
+.round-generate-form{gap:11px}
+.round-generate-form label{font-size:11px;font-weight:800;color:#b5c6dc;letter-spacing:.15px;gap:7px}
+.round-generate-form input,.round-generate-form select{
+  min-height:45px;border:1px solid #4b6078;border-radius:10px;
+  background:#18263b;color:#eef5ff;padding:10px 13px;
+  font-size:12px;font-weight:750;outline:none;
+}
+.round-generate-form input[readonly]{width:84px;background:#253249;color:#c6ef50;text-align:center}
+.round-generate-form select{
+  width:min(100%,270px);min-width:240px;appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23bed3e3' stroke-width='2.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 10px center;padding-right:32px;color-scheme:dark;
+}
+.round-generate-form select:focus,.round-generate-form input:focus{border-color:#b7e56a;box-shadow:0 0 0 3px rgba(198,239,80,.12)}
+.round-swap .search-combobox{min-width:190px;max-width:260px}
+.round-swap .search-combobox-input{min-height:44px!important;background:#18263b!important;border-radius:10px!important;border-color:#4b6078!important}
+.event-detail-nav-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:13px}
+.event-detail-nav #eventDetailDelete{font-size:11px}
+@media(max-width:570px){
+  .event-filter-bar{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .event-filter-bar>label:first-child{grid-column:1/-1}
+  .event-filter-bar>label:last-child{grid-column:1/-1}
+  .round-generate-form label,.round-generate-form select{width:100%;min-width:0}
+  .round-generate-form label:has(input[readonly]){width:105px}
+  .round-swap .search-combobox{width:100%;max-width:none}
+  .event-detail-nav-actions{width:100%;justify-content:flex-start}
+}
+/* Evita a largura mínima imposta aos campos de busca dentro de painéis. */
+.panel .event-filter-bar input[type=search]{min-width:0!important;width:100%!important;border:0!important;background:transparent!important;box-shadow:none!important;font-size:13px}
+.panel .event-filter-bar input[type=search]:focus{outline:none!important}
+
+/* v2.3.7 - proteção e revisão de exclusões */
+.result-cleanup-section{margin-top:24px;padding-top:22px;border-top:1px solid rgba(180,200,220,.15)}
+.result-cleanup-heading h3{margin:4px 0 10px;font-size:1.15rem}
+.result-cleanup-section>.button-outline{display:inline-flex;align-items:center;margin:8px 8px 12px 0;text-decoration:none}
+.result-cleanup-list{display:grid;gap:10px;margin-top:8px}
+.result-cleanup-row{display:flex;align-items:center;justify-content:space-between;gap:15px;padding:15px;border-radius:12px;background:rgba(255,255,255,.035);border:1px solid rgba(210,220,240,.12)}
+.result-cleanup-row strong{display:block;margin-bottom:4px;overflow-wrap:anywhere}
+.result-cleanup-row .event-delete-btn{flex-shrink:0}
+@media(max-width:660px){.result-cleanup-row{align-items:stretch;flex-direction:column}.result-cleanup-row .event-delete-btn{align-self:flex-start}}

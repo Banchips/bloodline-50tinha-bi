@@ -2,7 +2,7 @@
 """Bloodline 50tinha BI — servidor sem dependencias externas (Python 3.10+)."""
 import argparse
 import csv
-from contextlib import contextmanager
+from contextlib import contextmanager, closing
 import getpass
 import hashlib
 import hmac
@@ -185,6 +185,18 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_player_sessions_player ON player_sessions(player_id);
         
         ''')
+        # Auditoria de limpezas intencionais (não reconta partidas apagadas).
+        db.execute("""CREATE TABLE IF NOT EXISTS result_purge_audit (
+            id INTEGER PRIMARY KEY,
+            season_id INTEGER NOT NULL,
+            event_date TEXT NOT NULL,
+            episode TEXT NOT NULL,
+            event_name TEXT,
+            removed_matches INTEGER NOT NULL,
+            removed_tables INTEGER NOT NULL,
+            admin_id INTEGER REFERENCES admins(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
         # Migração incremental: não recria nem substitui o banco em produção.
         event_cols = {r['name'] for r in db.execute('PRAGMA table_info(league_events)')}
         if 'registrations_open' not in event_cols:
@@ -1412,6 +1424,88 @@ def choose_event_pairings(db, event, round_no, eligible, mode='auto'):
     return best,'swiss',note
 
 
+def event_result_groups(db):
+    """Agrupa resultados pelo identificador legado (temporada, data, EP).
+
+    Inclui eventos excluídos antes desta versão. Resultados importados sem
+    vínculo de mesa são identificados pelo mesmo trio, sem adivinhar identidades.
+    """
+    rows = db.execute("""SELECT season_id,event_date,episode FROM matches
+        UNION SELECT season_id,event_date,episode FROM game_tables""").fetchall()
+    groups = []
+    for row in rows:
+        sid, dt, ep = row['season_id'], row['event_date'], row['episode']
+        ev = db.execute("""SELECT id,name,ended_at FROM league_events
+            WHERE season_id=? AND event_date=? AND episode=?""", (sid,dt,ep)).fetchone()
+        matches = db.execute("""SELECT COUNT(*) AS n FROM matches
+            WHERE season_id=? AND event_date=? AND episode=?""", (sid,dt,ep)).fetchone()['n']
+        tables = db.execute("""SELECT COUNT(*) AS n FROM game_tables
+            WHERE season_id=? AND event_date=? AND episode=?""", (sid,dt,ep)).fetchone()['n']
+        season = db.execute('SELECT name FROM seasons WHERE id=?',(sid,)).fetchone()
+        finished = bool(ev and ev['ended_at'])
+        groups.append({'season_id':sid,'season_name':season['name'] if season else '—',
+            'event_date':dt,'episode':ep,'event_id':ev['id'] if ev else None,
+            'event_name':ev['name'] if ev else 'Evento não encontrado na agenda',
+            'ended':finished, 'can_purge':not ev or finished,
+            'matches':matches,'tables':tables})
+    return sorted(groups,key=lambda g:(g['event_date'],g['season_id'],g['episode']),reverse=True)
+
+
+def backup_before_purge():
+    """Cópia transacional no volume, criada antes de qualquer DELETE.
+
+    Usuário também pode baixar o banco completo fora do servidor.
+    """
+    path = DB_PATH.parent / 'backups'
+    path.mkdir(parents=True,exist_ok=True)
+    stamp=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+    dest=path / f'antes_limpeza_{stamp}_{secrets.token_hex(3)}.db'
+    try:
+        with closing(sqlite3.connect(DB_PATH)) as original, closing(sqlite3.connect(dest)) as copy:
+            original.backup(copy)
+    except Exception:
+        dest.unlink(missing_ok=True)
+        raise UserInputError('Não foi possível criar o backup. Operação cancelada.')
+    return dest.name
+
+
+def purge_event_results(db, season_id, event_date, episode, admin_id, event_name=None):
+    """Exclusão integral, em uma transação: não deixa mesa para repontuar depois.
+
+    O trio temporada/data/EP identifica o lote legado. Cabe ao administrador
+    conferir a prévia, pois também inclui registros antigos sem table_id.
+    """
+    evs=db.execute("""SELECT id,name,ended_at FROM league_events
+        WHERE season_id=? AND event_date=? AND episode=?""",(season_id,event_date,episode)).fetchall()
+    if any(e['ended_at'] is None for e in evs):
+        raise UserInputError('Encerre o evento antes de apagar definitivamente seus resultados.')
+    for event in evs:
+        rounds=db.execute('SELECT finalized_at FROM event_rounds WHERE event_id=?',(event['id'],)).fetchall()
+        if any(r['finalized_at'] is None for r in rounds):
+            raise UserInputError('Há rodadas não finalizadas. Finalize antes da limpeza.')
+    m=db.execute("""SELECT COUNT(*) AS n FROM matches WHERE season_id=? AND event_date=? AND episode=?""",
+                 (season_id,event_date,episode)).fetchone()['n']
+    g=db.execute("""SELECT COUNT(*) AS n FROM game_tables WHERE season_id=? AND event_date=? AND episode=?""",
+                 (season_id,event_date,episode)).fetchone()['n']
+    if not m and not g:
+        raise UserInputError('Nenhuma partida ou mesa encontrada para esse EP.')
+    # Nunca modificar o banco se o backup consistente falhar.
+    backup_name=backup_before_purge()
+    db.execute("""DELETE FROM matches WHERE season_id=? AND event_date=? AND episode=?""",
+               (season_id,event_date,episode))
+    # Elimina também pendentes/rejeitadas, evitando vínculos mortos e recontagem.
+    db.execute("""DELETE FROM game_tables WHERE season_id=? AND event_date=? AND episode=?""",
+               (season_id,event_date,episode))
+    for event in evs:
+        db.execute('DELETE FROM event_rounds WHERE event_id=?',(event['id'],))
+        db.execute('DELETE FROM league_events WHERE id=?',(event['id'],))
+    db.execute("""INSERT INTO result_purge_audit
+          (season_id,event_date,episode,event_name,removed_matches,removed_tables,admin_id)
+          VALUES (?,?,?,?,?,?,?)""",
+          (season_id,event_date,episode,event_name or (evs[0]['name'] if evs else None),m,g,admin_id))
+    return {'matches_removed':m,'tables_removed':g,'backup_created':backup_name}
+
+
 def close_league_event(db, event_id):
     ev = db.execute('SELECT * FROM league_events WHERE id=?',(event_id,)).fetchone()
     if not ev:raise UserInputError('Evento não encontrado.')
@@ -1759,6 +1853,22 @@ class Handler(BaseHTTPRequestHandler):
                     'username':admin['username'] if admin else None,
                     'role':admin['role'] if admin else None,
                     'can_manage_admins':bool(admin and admin['role']=='owner')})
+            if path == '/api/admin/result-groups':
+                if not self.require_owner():return
+                with conn_db() as db:
+                    return self.respond(200,{'groups':event_result_groups(db)})
+            if path == '/api/admin/download-database':
+                if not self.require_owner():return
+                # SQLite Backup API inclui transações WAL já confirmadas.
+                with DB_LOCK:
+                    with tempfile.TemporaryDirectory() as d:
+                        snapshot=Path(d)/'bloodline_backup.db'
+                        with closing(sqlite3.connect(DB_PATH)) as original,closing(sqlite3.connect(snapshot)) as copy:
+                            original.backup(copy)
+                        content=snapshot.read_bytes()
+                return self.respond(200,content,'application/octet-stream',
+                    {'Content-Disposition':'attachment; filename="bloodline_backup.db"',
+                     'Cache-Control':'no-store'})
             if path == '/api/admin/events':
                 if not self.require_admin():return
                 with conn_db() as db:
@@ -2104,6 +2214,7 @@ class Handler(BaseHTTPRequestHandler):
                     db.commit()
                 return self.respond(200,{'ok':True})
             if not self.require_admin():return
+            admin=self.current_admin()
             with DB_LOCK, conn_db() as db:
                 if path == '/api/admin/events' and method == 'POST':
                     values = validate_league_event(db,obj)
@@ -2201,6 +2312,20 @@ class Handler(BaseHTTPRequestHandler):
                        int_id(obj.get('player_a'),'Primeiro jogador'),int_id(obj.get('player_b'),'Segundo jogador'))
                     db.commit()
                     return self.respond(200,{'ok':True})
+                if path == '/api/admin/result-groups' and method == 'DELETE':
+                    if admin['role']!='owner':
+                        return self.respond(403,{'error':'Somente a conta principal pode apagar resultados.'})
+                    sid=int_id(obj.get('season_id'),'Temporada')
+                    dt=date_value(obj.get('event_date'))
+                    episode=txt(obj.get('episode'),'EP',70,False)
+                    if obj.get('confirmation') != 'APAGAR RESULTADOS':
+                        raise UserInputError('Digite APAGAR RESULTADOS para confirmar.')
+                    expected=f'{sid}|{dt}|{episode}'
+                    if obj.get('confirm_group') != expected:
+                        raise UserInputError('Identificação do lote divergente. Nenhum dado foi apagado.')
+                    result=purge_event_results(db,sid,dt,episode,admin['id'])
+                    db.commit()
+                    return self.respond(200,{'ok':True,**result})
                 event_match = re.fullmatch(r'/api/admin/events/(\d+)',path)
                 if event_match and method == 'PUT':
                     event_id = int(event_match.group(1))
@@ -2235,21 +2360,57 @@ class Handler(BaseHTTPRequestHandler):
                     event_id = int(event_match.group(1))
                     ev = db.execute('SELECT * FROM league_events WHERE id=?',(event_id,)).fetchone()
                     if not ev:raise UserInputError('Evento não encontrado.')
-                    # Os resultados da v2.2.5 não referenciam event_id diretamente.
-                    # Não excluir um EP que já possua mesas ou partidas com os
-                    # mesmos dados de temporada/data/episódio.
+                    if obj.get('delete_results') is True:
+                        if admin['role'] != 'owner':
+                            return self.respond(403,{'error':'Apenas a conta principal pode excluir pontuação.'})
+                        if not ev['ended_at']:
+                            raise UserInputError('Encerre o evento antes de excluir também os resultados.')
+                        if obj.get('confirm_name') != ev['name'] or obj.get('confirmation') != 'APAGAR RESULTADOS':
+                            raise UserInputError('Confirme o nome exato e digite APAGAR RESULTADOS.')
+                        result=purge_event_results(db,ev['season_id'],ev['event_date'],ev['episode'],admin['id'],ev['name'])
+                        db.commit()
+                        return self.respond(200,{'ok':True,'results_preserved':False,**result})
+                    # O evento encerrado pode sair da agenda, mas resultados
+                    # OFICIAIS e seus adversários precisam continuar disponíveis
+                    # ao ranking e ao OPW%. Nunca apagar matches/game_tables.
+                    rounds = db.execute('SELECT id,finalized_at FROM event_rounds WHERE event_id=?',(event_id,)).fetchall()
+                    if ev['ended_at']:
+                        # Confirmação adicional validada no servidor: a UI não
+                        # é a única barreira contra exclusões acidentais.
+                        if obj.get('confirm_name') != ev['name']:
+                            raise UserInputError('Para excluir o evento encerrado, confirme digitando seu nome exatamente.')
+                        if any(r['finalized_at'] is None for r in rounds):
+                            raise UserInputError('Existem rodadas não finalizadas; regularize-as antes de excluir o evento.')
+                        # As mesas guardam o resultado, os participantes e os
+                        # vínculos das partidas. Somente o vínculo de pareamento
+                        # é liberado para remoção do cronograma (FK RESTRICT).
+                        linked=db.execute('''SELECT COUNT(*) AS n FROM game_tables g
+                            JOIN event_pairings ep ON ep.id=g.pairing_id
+                            JOIN event_rounds er ON er.id=ep.round_id
+                            WHERE er.event_id=?''',(event_id,)).fetchone()['n']
+                        db.execute('''UPDATE game_tables SET pairing_id=NULL
+                            WHERE pairing_id IN (
+                                SELECT ep.id FROM event_pairings ep
+                                JOIN event_rounds er ON er.id=ep.round_id
+                                WHERE er.event_id=?)''',(event_id,))
+                        # Cascata remove mesas de pareamento, participantes e
+                        # inscrições do evento, sem tocar nos perfis dos players.
+                        db.execute('DELETE FROM event_rounds WHERE event_id=?',(event_id,))
+                        db.execute('DELETE FROM league_events WHERE id=?',(event_id,))
+                        db.commit()
+                        return self.respond(200,{'ok':True,'results_preserved':True,'tables_preserved':linked})
+                    # Para eventos ainda abertos, manter a proteção anterior:
+                    # exclua somente cadastros sem partidas nem rodadas geradas.
                     if db.execute("SELECT 1 FROM matches WHERE season_id=? AND event_date=? AND episode=? LIMIT 1",
                                   (ev['season_id'],ev['event_date'],ev['episode'])).fetchone() or \
                        db.execute("SELECT 1 FROM game_tables WHERE season_id=? AND event_date=? AND episode=? LIMIT 1",
                                   (ev['season_id'],ev['event_date'],ev['episode'])).fetchone():
-                        raise UserInputError('Este evento possui resultados ou mesas vinculadas. Preserve o histórico antes de excluí-lo.')
-                    if db.execute('SELECT 1 FROM event_rounds WHERE event_id=? LIMIT 1',(event_id,)).fetchone():
-                        raise UserInputError('Este evento possui rodadas geradas. Exclua os rascunhos ou despublique as rodadas antes de remover o evento.')
-                    # As inscrições pertencem exclusivamente ao evento; o
-                    # ON DELETE CASCADE as elimina, sem apagar os jogadores.
+                        raise UserInputError('Este evento possui resultados ou mesas vinculadas. Finalize e encerre o evento antes de remover seu cadastro, preservando o ranking.')
+                    if rounds:
+                        raise UserInputError('Este evento possui rodadas geradas. Exclua os rascunhos antes de remover o evento.')
                     db.execute('DELETE FROM league_events WHERE id=?',(event_id,))
                     db.commit()
-                    return self.respond(200,{'ok':True})
+                    return self.respond(200,{'ok':True,'results_preserved':True})
                 register_route = re.fullmatch(r'/api/admin/events/(\d+)/registrations',path)
                 if register_route and method == 'POST':
                     event_id = int(register_route.group(1))

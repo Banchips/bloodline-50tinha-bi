@@ -585,6 +585,7 @@ async function loadLeagueEvents(){
     if(match)state.selectedEventId=Number(match[1]);
     if(!state.events.some(e=>e.id===state.selectedEventId))state.selectedEventId=state.events[0]?.id||null;
     renderLeagueEvents();
+    if(state.canManageAdmins)loadResultGroups();
     if(window.location.hash.startsWith('#/invite/'))applyRoute(false);
   }catch(err){toast(err.message,true)}
 }
@@ -634,21 +635,80 @@ function renderLeagueEvents(){
     $('eventCancelEdit').classList.remove('hidden');navigateTo('#/admin/events');renderLeagueEvents();
     $('eventForm').scrollIntoView({behavior:'smooth',block:'start'});
   }));
-  $('eventList').querySelectorAll('[data-event-delete]').forEach(btn=>btn.addEventListener('click',async()=>{
-    const ev=events.find(e=>e.id===Number(btn.dataset.eventDelete));if(!ev)return;
-    if(!confirm(`Excluir o evento "${ev.name}" (${ev.season_name} · ${ev.episode}) e suas ${ev.total_registered} inscrição(ões)?\n\nEsta ação é permanente. Resultados já lançados são protegidos.`))return;
-    try{
-      await api(`/api/admin/events/${ev.id}`,{method:'DELETE',body:{}});
-      if(state.editingEventId===ev.id)resetEventForm();
-      if(state.selectedEventId===ev.id)state.selectedEventId=null;
-      if(window.location.hash===`#/admin/events/${ev.id}`)navigateTo('#/admin/events');
-      await loadLeagueEvents();toast('Evento e inscrições excluídos.');
-    }catch(err){toast(err.message,true)}
-  }));
+  $('eventList').querySelectorAll('[data-event-delete]').forEach(btn=>btn.addEventListener('click',()=>deleteLeagueEvent(Number(btn.dataset.eventDelete))));
   renderEventRoster();
 }
+// O proprietário escolhe manter ou apagar as pontuações antes de excluir o evento.
+async function deleteLeagueEvent(eventId){
+  const ev=state.events.find(e=>e.id===eventId);if(!ev)return;
+  const hasHistory=Boolean(ev.ended_at);
+  let payload={}, deletedResults=false;
+  if(hasHistory){
+    const choice=prompt(`Excluir o evento ENCERRADO "${ev.name}"?\n\nMANTER = remove o evento da agenda mas mantém resultados e pontos.\nAPAGAR = remove também as partidas, mesas, pontos e OPW% vinculados a este EP (somente conta principal).\n\nDigite MANTER ou APAGAR. Cancelar não faz alterações:`);
+    if(choice===null)return;
+    const mode=choice.trim().toUpperCase();
+    if(!['MANTER','APAGAR'].includes(mode))return toast('Escolha MANTER ou APAGAR. Nada foi excluído.',true);
+    if(mode==='APAGAR'&&!state.canManageAdmins)return toast('Apenas a conta principal pode apagar resultados.',true);
+    const confirmName=prompt(`Confirme digitando o NOME EXATO do evento: ${ev.name}`);
+    if(confirmName===null)return;
+    if(confirmName!==ev.name)return toast('Nome diferente. Nada foi excluído.',true);
+    payload={confirm_name:confirmName};
+    if(mode==='APAGAR'){
+      const phrase=prompt('ATENÇÃO: pontos, partidas e OPW% serão recalculados. Isso não pode ser desfeito sem backup.\n\nAntes de continuar, baixe uma cópia do SQLite na seção Gerenciar resultados de teste.\n\nDigite APAGAR RESULTADOS para confirmar:');
+      if(phrase!=='APAGAR RESULTADOS')return toast('Exclusão cancelada.',true);
+      payload={...payload,delete_results:true,confirmation:phrase};deletedResults=true;
+    }
+  }else{
+    if(!confirm(`Excluir o evento "${ev.name}" (${ev.season_name} · ${ev.episode}) e suas ${ev.total_registered} inscrição(ões)?\n\nEventos com rodadas ativas não podem ser removidos.`))return;
+  }
+  try{
+    const data=await api(`/api/admin/events/${ev.id}`,{method:'DELETE',body:payload});
+    if(state.editingEventId===ev.id)resetEventForm();
+    if(state.selectedEventId===ev.id)state.selectedEventId=null;
+    if(window.location.hash===`#/admin/events/${ev.id}`)navigateTo('#/admin/events');
+    await loadLeagueEvents();await loadPublic();
+    toast(deletedResults?`Evento e ${data.matches_removed} partidas removidos. Ranking atualizado.`:'Evento excluído. Resultados preservados.');
+  }catch(err){toast(err.message,true)}
+}
+
+function renderResultGroups(groups){
+  const root=$('resultGroupList');if(!root)return;
+  const available=groups.filter(g=>g.can_purge);
+  root.innerHTML=available.length?available.map(g=>{
+    const code=`${g.season_id}|${g.event_date}|${g.episode}`;
+    return `<div class="result-cleanup-row"><div><strong>${safe(g.season_name)} · ${safe(g.episode||'(sem EP)')}</strong><div class="muted-note">${fmtDate(g.event_date)} · ${safe(g.event_name)} · ${g.matches} partidas / ${g.tables} mesas</div></div><button type="button" class="event-delete-btn" data-purge-group="${safe(code)}">Apagar resultados</button></div>`;
+  }).join(''):'<p class="muted-note">Nenhum resultado disponível para limpeza. Eventos ainda ativos não aparecem aqui.</p>';
+  root.querySelectorAll('[data-purge-group]').forEach(btn=>btn.addEventListener('click',()=>{
+    const g=available.find(i=>`${i.season_id}|${i.event_date}|${i.episode}`===btn.dataset.purgeGroup);
+    if(g)purgeResultGroup(g);
+  }));
+}
+async function loadResultGroups(){
+  const section=$('resultCleanupSection');if(!section)return;
+  section.classList.toggle('hidden',!state.canManageAdmins);
+  if(!state.canManageAdmins)return;
+  try{const d=await api('/api/admin/result-groups');renderResultGroups(d.groups||[])}
+  catch(err){$('resultGroupList').textContent='Não foi possível carregar os resultados: '+err.message}
+}
+async function purgeResultGroup(g){
+  const code=`${g.season_id}|${g.event_date}|${g.episode}`;
+  if(!confirm(`LIMPEZA DEFINITIVA DE RESULTADOS\n\n${g.season_name} · ${g.episode||'(sem EP)'} · ${fmtDate(g.event_date)}\n${g.matches} partidas e ${g.tables} mesas serão excluídas.\n\nIsso inclui resultados antigos importados com esta mesma temporada, data e EP, mesmo que não tenham mesa vinculada.\n\nFez o download do backup completo?`))return;
+  const phrase=prompt('Digite APAGAR RESULTADOS para confirmar a limpeza deste lote:');
+  if(phrase!=='APAGAR RESULTADOS')return toast('Limpeza cancelada.',true);
+  try{
+    const d=await api('/api/admin/result-groups',{method:'DELETE',body:{season_id:g.season_id,event_date:g.event_date,episode:g.episode,confirm_group:code,confirmation:phrase}});
+    await loadLeagueEvents();await loadPublic();
+    toast(`Excluídas ${d.matches_removed} partidas e ${d.tables_removed} mesas. Ranking recalculado.`);
+  }catch(err){toast(err.message,true)}
+}
+
 function renderEventRoster(){
   const ev=state.events.find(x=>x.id===state.selectedEventId);
+  const detailDelete=$('eventDetailDelete');
+  if(detailDelete){
+    detailDelete.classList.toggle('hidden',!ev?.ended_at);
+    detailDelete.onclick=ev?.ended_at?()=>deleteLeagueEvent(ev.id):null;
+  }
   $('eventRosterTitle').textContent=ev?ev.name:'Lista de jogadores';
   $('eventRosterSubtitle').textContent=ev?`${fmtDate(ev.event_date)} · ${ev.season_name} · ${ev.episode}`:'Cadastre e selecione um evento para inscrever jogadores.';
   $('eventRosterContent').classList.toggle('hidden',!ev);
@@ -1100,6 +1160,7 @@ function bindEvents(){
  ['eventAgendaSearch','eventAgendaDate','eventAgendaSeason','eventAgendaPrimary'].forEach(id=>{
    $(id).addEventListener(id==='eventAgendaSearch'?'input':'change',()=>renderLeagueEvents());
  });
+ $('refreshResultGroups').addEventListener('click',loadResultGroups);
  $('eventForm').addEventListener('submit',async e=>{
    e.preventDefault();
    const editing=state.editingEventId;
