@@ -620,7 +620,7 @@ function renderLeagueEvents(){
     .sort((a,b)=>Number(Boolean(b.active_round))-Number(Boolean(a.active_round))
       || (primary==='season'?(seasonCmp(a,b)||dateCmp(a,b)):(dateCmp(a,b)||seasonCmp(a,b)))||(b.id-a.id));
   $('eventList').innerHTML=visibleEvents.length?visibleEvents.map(ev=>`<article class="event-list-item ${ev.id===state.selectedEventId?'selected':''} ${ev.active_round?'event-active':''} ${ev.ended_at?'event-closed':''}">
-   <a class="event-list-select" href="#/admin/events/${ev.id}" target="_blank" rel="noopener noreferrer" data-event-open="${ev.id}" ${ev.id===state.selectedEventId?'aria-current="page"':''}>
+   <a class="event-list-select" href="#/admin/events/${ev.id}" data-event-open="${ev.id}" ${ev.id===state.selectedEventId?'aria-current="page"':''}>
     <span class="event-day">${safe(fmtDate(ev.event_date))}</span><strong>${safe(ev.name)}</strong>
     <small>${safe(ev.season_name)} · ${safe(ev.episode)} · ${ev.total_registered} inscrito(s) · ${ev.ended_at?'EVENTO ENCERRADO':ev.active_round?'● RODADA ATIVA':ev.registrations_open?'INSCRIÇÕES ABERTAS':'INSCRIÇÕES FECHADAS'}</small>
    </a><a class="event-qr-btn" href="#/invite/${ev.id}" data-event-invite="${ev.id}" title="Abrir QR Code e link de inscrição" aria-label="QR Code e link para ${safe(ev.name)}">▦ QR</a>${ev.ended_at?'':`<button class="event-edit-btn" type="button" data-event-edit="${ev.id}" aria-label="Editar evento ${safe(ev.name)}">Editar</button>`}<button class="event-delete-btn" type="button" data-event-delete="${ev.id}" aria-label="Excluir evento ${safe(ev.name)}">Excluir</button>
