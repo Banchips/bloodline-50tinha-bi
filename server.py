@@ -189,6 +189,8 @@ def init_db():
         event_cols = {r['name'] for r in db.execute('PRAGMA table_info(league_events)')}
         if 'registrations_open' not in event_cols:
             db.execute('ALTER TABLE league_events ADD COLUMN registrations_open INTEGER NOT NULL DEFAULT 0 CHECK(registrations_open IN (0,1))')
+        if 'ended_at' not in event_cols:
+            db.execute('ALTER TABLE league_events ADD COLUMN ended_at TEXT')
         reg_cols = {r['name'] for r in db.execute('PRAGMA table_info(event_registrations)')}
         if 'deck_id' not in reg_cols:
             db.execute('ALTER TABLE event_registrations ADD COLUMN deck_id INTEGER REFERENCES decks(id) ON DELETE SET NULL')
@@ -246,6 +248,9 @@ def init_db():
             db.execute('ALTER TABLE matches ADD COLUMN deck_id INTEGER REFERENCES decks(id) ON DELETE SET NULL')
         db.execute("UPDATE matches SET result='V' WHERE result='C'")
         db.execute('UPDATE matches SET points_override=NULL WHERE points_override IS NOT NULL')
+        # Corrige resultados de mesas oficiais aprovadas que por erro antigo não
+        # foram propagados integralmente ao histórico usado pelo ranking.
+        repair_approved_event_results(db)
 
 
 USERNAME_PATTERN = re.compile(r'[A-Za-z][A-Za-z0-9._-]{2,31}\Z')
@@ -986,19 +991,86 @@ def create_table(db,header,entries,approved=False):
     return table_id
 
 
+def ensure_approved_table_results(db, table_id):
+    """Garantia idempotente: uma entrada oficial aprovada = uma partida pontuante.
+
+    Nunca reproduz pontos de uma mesa pendente/rejeitada e nunca duplica
+    um registro que já possui o vínculo table_id. Restringe a recuperação
+    automática às mesas oficiais ligadas a um pareamento.
+    """
+    table = db.execute('SELECT * FROM game_tables WHERE id=?', (table_id,)).fetchone()
+    if not table or table['status'] != 'approved':
+        raise UserInputError('Somente mesas aprovadas podem entrar no ranking.')
+    entries = db.execute('SELECT * FROM game_table_entries WHERE table_id=?', (table_id,)).fetchall()
+    if len(entries) not in (3, 4) or len({r['player_id'] for r in entries}) != len(entries):
+        raise UserInputError('Mesa aprovada inválida: participantes não conferem.')
+    if table['pairing_id'] is not None:
+        official = db.execute("""SELECT pp.player_id,pp.tribe_id FROM event_pairing_players pp
+            JOIN event_pairings ep ON ep.id=pp.pairing_id
+            JOIN event_rounds er ON er.id=ep.round_id
+            JOIN league_events ev ON ev.id=er.event_id
+            WHERE ep.id=? AND ev.season_id=? AND ev.event_date=? AND ev.episode=?
+              AND er.round_no=? AND ep.table_no=?""",
+            (table['pairing_id'],table['season_id'],table['event_date'],
+             table['episode'],table['round_no'],table['table_no'])).fetchall()
+        if {(r['player_id'],r['tribe_id']) for r in entries} != {(r['player_id'],r['tribe_id']) for r in official}:
+            raise UserInputError('Mesa aprovada divergente do pareamento oficial.')
+    current = db.execute('SELECT player_id,tribe_id,result,deck_id FROM matches WHERE table_id=?',
+                         (table_id,)).fetchall()
+    by_player = {r['player_id']: r for r in current}
+    if len(by_player) != len(current):
+        raise UserInputError('Há partidas duplicadas nesta mesa. Corrija antes de continuar.')
+    inserted = 0
+    for entry in entries:
+        r = by_player.get(entry['player_id'])
+        if r:
+            if (r['tribe_id'], r['result']) != (entry['tribe_id'], entry['result']):
+                raise UserInputError('Resultado do ranking diverge da mesa aprovada; revisão manual necessária.')
+            continue
+        # Evitar duplicar partidas antigas importadas sem vínculo table_id.
+        unlinked=db.execute("""SELECT id FROM matches WHERE table_id IS NULL
+            AND season_id=? AND event_date=? AND episode=? AND round_no=? AND player_id=?
+            LIMIT 1""", (table['season_id'],table['event_date'],table['episode'],
+                         table['round_no'],entry['player_id'])).fetchone()
+        if unlinked:
+            raise UserInputError('Já existe resultado individual nesta rodada. Revise o vínculo da mesa sem duplicar a pontuação.')
+        db.execute("""INSERT INTO matches
+            (season_id,event_date,episode,round_no,player_id,tribe_id,result,table_id,deck_id)
+            VALUES (?,?,?,?,?,?,?,?,?)""",
+            (table['season_id'],table['event_date'],table['episode'],table['round_no'],
+             entry['player_id'],entry['tribe_id'],entry['result'],table_id,entry['deck_id']))
+        inserted += 1
+    return inserted
+
+
+def repair_approved_event_results(db):
+    """Migração conservadora: restaura somente registros faltantes de mesas pareadas."""
+    repaired = 0
+    for row in db.execute("SELECT id FROM game_tables WHERE status='approved' AND pairing_id IS NOT NULL"):
+        try:
+            # SAVEPOINT: conflito em um registro não deixa importação parcial.
+            db.execute('SAVEPOINT repair_table')
+            repaired += ensure_approved_table_results(db, row['id'])
+            db.execute('RELEASE SAVEPOINT repair_table')
+        except (UserInputError, sqlite3.IntegrityError) as err:
+            db.execute('ROLLBACK TO SAVEPOINT repair_table')
+            db.execute('RELEASE SAVEPOINT repair_table')
+            print(f'ATENÇÃO: Mesa aprovada #{row["id"]} requer revisão: {err}', file=sys.stderr)
+    if repaired:
+        print(f'MIGRAÇÃO DE RESULTADOS: {repaired} registros oficiais recuperados.', file=sys.stderr)
+    return repaired
+
+
 def review_table(db, table_id, approved, note=''):
     row=db.execute('SELECT * FROM game_tables WHERE id=?',(table_id,)).fetchone()
     if not row:raise UserInputError('Mesa não encontrada.')
     if row['status']!='pending':
         raise UserInputError('A mesa já foi revisada. Exclua-a se precisar relançar.')
-    if approved:
-        entries=db.execute('SELECT * FROM game_table_entries WHERE table_id=?',(table_id,)).fetchall()
-        for r in entries:
-            db.execute('''INSERT INTO matches(season_id,event_date,episode,round_no,player_id,tribe_id,result,table_id,deck_id)
-                VALUES(?,?,?,?,?,?,?,?,?)''',(row['season_id'],row['event_date'],row['episode'],row['round_no'],
-               r['player_id'],r['tribe_id'],r['result'],table_id,r['deck_id']))
     db.execute('''UPDATE game_tables SET status=?,reviewed_at=CURRENT_TIMESTAMP,admin_note=? WHERE id=?''',
         ('approved' if approved else 'rejected',note,table_id))
+    if approved:
+        ensure_approved_table_results(db, table_id)
+
 
 
 def throttle_public(ip, kind, limit):
@@ -1042,7 +1114,7 @@ def public_open_events(db):
         SELECT e.id,e.name,e.event_date,e.episode,s.name AS season_name,
                (SELECT COUNT(*) FROM event_registrations r WHERE r.event_id=e.id) AS total_registered
         FROM league_events e JOIN seasons s ON s.id=e.season_id
-        WHERE e.registrations_open=1
+        WHERE e.registrations_open=1 AND e.ended_at IS NULL
         ORDER BY e.event_date,e.id''')]
 
 
@@ -1054,7 +1126,7 @@ def event_status_field(value, field):
 
 def list_league_events(db):
     events = [dict(row) for row in db.execute('''
-        SELECT e.id,e.name,e.event_date,e.season_id,e.episode,e.registrations_open,e.rounds_share_token,e.created_at,e.updated_at,
+        SELECT e.id,e.name,e.event_date,e.season_id,e.episode,e.registrations_open,e.ended_at,e.rounds_share_token,e.created_at,e.updated_at,
                s.name AS season_name
         FROM league_events e JOIN seasons s ON s.id=e.season_id
         ORDER BY e.event_date DESC,e.id DESC''')]
@@ -1081,6 +1153,8 @@ def list_league_events(db):
         ev['total_checkin'] = sum(row['checkin'] for row in ev['registrations'])
         ev['total_paid'] = sum(row['paid'] for row in ev['registrations'])
         ev['total_decklists_ok'] = sum(row['decklist_ok'] for row in ev['registrations'])
+        ev['active_round'] = any(r['status']=='published' for r in ev['rounds'])
+        ev['status'] = ('closed' if ev['ended_at'] else 'active' if ev['active_round'] else 'scheduled')
     return events
 
 
@@ -1107,7 +1181,7 @@ def event_round_list(db, event_id, published_only=False):
             submissions=db.execute('''SELECT g.id,g.status FROM game_tables g WHERE g.pairing_id=? ORDER BY g.id DESC''',(table['id'],)).fetchall()
             table['result_status']=submissions[0]['status'] if submissions else 'not_sent'
             table['result_count']=len(submissions)
-            table['approved_count']=sum(r['status']=='approved' for r in submissions)
+            table['approved_count']=sum(r['status']=='approved' and db.execute('SELECT COUNT(*) AS n FROM matches WHERE table_id=?',(r['id'],)).fetchone()['n']==len(table['players']) for r in submissions)
             table['pending_count']=sum(r['status']=='pending' for r in submissions)
         rnd['all_approved']=bool(tables) and all(t['approved_count']==1 and t['pending_count']==0 for t in tables)
         rnd['tables'] = tables
@@ -1338,6 +1412,20 @@ def choose_event_pairings(db, event, round_no, eligible, mode='auto'):
     return best,'swiss',note
 
 
+def close_league_event(db, event_id):
+    ev = db.execute('SELECT * FROM league_events WHERE id=?',(event_id,)).fetchone()
+    if not ev:raise UserInputError('Evento não encontrado.')
+    if ev['ended_at']:raise UserInputError('Este evento já está encerrado.')
+    rounds=db.execute('SELECT * FROM event_rounds WHERE event_id=? ORDER BY round_no',(event_id,)).fetchall()
+    if not rounds:
+        raise UserInputError('Para encerrar o evento, finalize pelo menos uma rodada. Eventos sem rodadas podem ser excluídos.')
+    if any(r['finalized_at'] is None for r in rounds):
+        raise UserInputError('Finalize todas as rodadas e aprove suas mesas antes de encerrar o evento.')
+    # A finalização de cada rodada já verificou que a mesa tem exatamente um
+    # resultado aprovado e o número correto de partidas oficiais.
+    db.execute('UPDATE league_events SET ended_at=CURRENT_TIMESTAMP,registrations_open=0,updated_at=CURRENT_TIMESTAMP WHERE id=?',(event_id,))
+
+
 def next_event_round_no(db,event_id):
     rows=db.execute('SELECT round_no,finalized_at FROM event_rounds WHERE event_id=? ORDER BY round_no',(event_id,)).fetchall()
     if not rows:return 1
@@ -1349,6 +1437,7 @@ def next_event_round_no(db,event_id):
 def generate_event_round(db, event_id, round_no, regenerate=False, mode='auto'):
     ev=db.execute('SELECT * FROM league_events WHERE id=?',(event_id,)).fetchone()
     if not ev:raise UserInputError('Evento não encontrado.')
+    if ev['ended_at']:raise UserInputError('Este evento já foi encerrado.')
     if not (1<=round_no<=12):raise UserInputError('Número da rodada deve estar entre 1 e 12.')
     expected=next_event_round_no(db,event_id)
     if round_no!=expected:raise UserInputError(f'A próxima rodada permitida é a {expected}. Finalize a anterior antes de avançar.')
@@ -1371,6 +1460,9 @@ def generate_event_round(db, event_id, round_no, regenerate=False, mode='auto'):
         for player in group:
             db.execute('''INSERT INTO event_pairing_players(round_id,pairing_id,player_id,tribe_id,deck_id)
                 VALUES(?,?,?,?,?)''',(rnd_id,pairing_id,player['player_id'],player['tribe_id'],player['deck_id']))
+    # A partir da elaboração do pareamento, a lista de inscritos é congelada.
+    db.execute('UPDATE league_events SET registrations_open=0,updated_at=CURRENT_TIMESTAMP WHERE id=?',
+               (event_id,))
     return rnd_id
 
 
@@ -1397,6 +1489,9 @@ def finalize_event_round(db,event_id,round_no):
 
 
 def update_event_round_status(db,event_id,round_no,publish):
+    event=db.execute('SELECT ended_at FROM league_events WHERE id=?',(event_id,)).fetchone()
+    if not event:raise UserInputError('Evento não encontrado.')
+    if event['ended_at']:raise UserInputError('Evento encerrado não pode ter rodadas publicadas.')
     rnd=db.execute('SELECT * FROM event_rounds WHERE event_id=? AND round_no=?',(event_id,round_no)).fetchone()
     if not rnd:raise UserInputError('Rodada não encontrada.')
     if rnd['finalized_at']:raise UserInputError('Rodada finalizada é somente leitura.')
@@ -1412,6 +1507,8 @@ def update_event_round_status(db,event_id,round_no,publish):
           JOIN event_pairings p ON pp.pairing_id=p.id WHERE p.round_id=? GROUP BY p.id''',(rnd['id'],))]
         if not sizes or any(n not in (3,4) for n in sizes):raise UserInputError('Pareamento incompleto. Mesas precisam ter 3 ou 4 jogadores.')
     db.execute('UPDATE event_rounds SET status=?, published_at=CASE WHEN ?=\'published\' THEN CURRENT_TIMESTAMP ELSE NULL END WHERE id=?',(new,new,rnd['id']))
+    if publish:
+        db.execute('UPDATE league_events SET registrations_open=0,updated_at=CURRENT_TIMESTAMP WHERE id=?',(event_id,))
 
 
 def swap_event_round_players(db,event_id,round_no,first,second):
@@ -2040,6 +2137,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self.respond(200,{'ok':True,'name':registration['name'],
                                             'player_id':registration['player_id'],
                                             'initial_password':new_password})
+                close_route=re.fullmatch(r'/api/admin/events/(\d+)/close',path)
+                if close_route and method=='POST':
+                    event_id=int(close_route.group(1))
+                    close_league_event(db,event_id)
+                    db.commit()
+                    return self.respond(200,{'ok':True,'closed':True})
                 finish_route=re.fullmatch(r'/api/admin/events/(\d+)/rounds/(\d+)/finish',path)
                 if finish_route and method=='POST':
                     event_id,round_no=map(int,finish_route.groups())
@@ -2105,12 +2208,18 @@ class Handler(BaseHTTPRequestHandler):
                         if not exists(db,'league_events',event_id):
                             raise UserInputError('Evento não encontrado.')
                         open_value=event_status_field(obj['registrations_open'],'Inscrições abertas')
+                        ev=db.execute('SELECT ended_at FROM league_events WHERE id=?',(event_id,)).fetchone()
+                        if open_value and ev['ended_at']:
+                            raise UserInputError('Evento encerrado não pode reabrir inscrições.')
+                        if open_value and db.execute('SELECT 1 FROM event_rounds WHERE event_id=? LIMIT 1',(event_id,)).fetchone():
+                            raise UserInputError('Exclua os rascunhos antes de reabrir inscrições. Rodadas publicadas ou finalizadas bloqueiam inscrições.')
                         db.execute('UPDATE league_events SET registrations_open=?,updated_at=CURRENT_TIMESTAMP WHERE id=?',
                                    (open_value,event_id))
                         db.commit()
                         return self.respond(200,{'ok':True,'registrations_open':bool(open_value)})
-                    if not exists(db,'league_events',event_id):
-                        raise UserInputError('Evento não encontrado.')
+                    ev=db.execute('SELECT ended_at FROM league_events WHERE id=?',(event_id,)).fetchone()
+                    if not ev:raise UserInputError('Evento não encontrado.')
+                    if ev['ended_at']:raise UserInputError('Evento encerrado: cadastros não podem ser editados.')
                     values = validate_league_event(db,obj)
                     if db.execute('SELECT 1 FROM event_rounds WHERE event_id=? LIMIT 1',(event_id,)).fetchone():
                         old=db.execute('SELECT event_date,season_id,episode FROM league_events WHERE id=?',(event_id,)).fetchone()
@@ -2144,8 +2253,9 @@ class Handler(BaseHTTPRequestHandler):
                 register_route = re.fullmatch(r'/api/admin/events/(\d+)/registrations',path)
                 if register_route and method == 'POST':
                     event_id = int(register_route.group(1))
-                    if not exists(db,'league_events',event_id):
-                        raise UserInputError('Evento não encontrado.')
+                    event=db.execute('SELECT ended_at FROM league_events WHERE id=?',(event_id,)).fetchone()
+                    if not event:raise UserInputError('Evento não encontrado.')
+                    if event['ended_at']:raise UserInputError('Evento encerrado: não é possível adicionar inscrições.')
                     player_id, tribe_id, deck_id = validate_event_registration(db,obj)
                     if db.execute('SELECT 1 FROM event_registrations WHERE event_id=? AND player_id=?',
                                   (event_id,player_id)).fetchone():
@@ -2162,6 +2272,8 @@ class Handler(BaseHTTPRequestHandler):
                                        (registration_id,event_id)).fetchone()
                     if not found:
                         raise UserInputError('Inscrição não encontrada neste evento.')
+                    if db.execute('SELECT ended_at FROM league_events WHERE id=?',(event_id,)).fetchone()['ended_at']:
+                        raise UserInputError('Evento encerrado: histórico de inscrições é somente leitura.')
                     if method == 'DELETE':
                         if db.execute('''SELECT 1 FROM event_pairing_players pp JOIN event_rounds rnd ON rnd.id=pp.round_id
                             WHERE rnd.event_id=? AND pp.player_id=? LIMIT 1''',(event_id,found['player_id'])).fetchone():

@@ -390,7 +390,7 @@ function editMatch(id){const m=state.admin.all_matches.find(x=>x.id===id);if(!m)
 }
 function resetMatchForm(){state.editing=null;$('matchForm').reset();$('matchFormTitle').textContent='Adicionar partida';$('saveMatch').textContent='Salvar resultado';$('cancelEdit').classList.add('hidden');$('mSeason').value=state.season!=='all'?state.season:String(state.admin?.master.seasons.at(-1)?.id||'');{const now=new Date(); $('mDate').value=fmtDate(today())}}
 async function deleteMatch(id){if(!confirm(`Excluir a partida #${id}? Essa ação não pode ser desfeita.`))return;try{await api(`/api/matches/${id}`,{method:'DELETE',body:{}});toast('Partida excluída.');if(state.editing===id)resetMatchForm();await reloadAll()}catch(err){toast(err.message,true)}}
-async function reloadAll(){await loadPublic(false);await loadAdmin()}
+async function reloadAll(){await loadPublic(false);await loadAdmin();await loadLeagueEvents()}
 function switchAdminTab(tab,updateUrl=true){if(updateUrl){navigateTo('#/admin/'+tab);return;}document.querySelectorAll('.admin-tab').forEach(e=>{e.classList.toggle('active',e.dataset.adminTab===tab);if(e.dataset.adminTab===tab)e.setAttribute('aria-current','page');else e.removeAttribute('aria-current')});document.querySelectorAll('.admin-pane').forEach(e=>e.classList.toggle('hidden',e.id!=='pane-'+tab));if(tab==='roster' && state.loggedIn)refreshPlayerAccessRequests();}
 async function downloadEndpoint(path,filename){try{const r=await fetch(path,{credentials:'same-origin'});if(!r.ok)throw new Error('Não autorizado ou exportação indisponível.');const blob=await r.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Arquivo exportado.')}catch(err){toast(err.message,true)}}
 
@@ -489,7 +489,12 @@ function renderTableReview(){
   $('tableReviewList').querySelectorAll('button[data-review]').forEach(b=>b.addEventListener('click',async()=>{
     const approved=b.dataset.status==='approved';if(!confirm(approved?'Aprovar a mesa e somar os pontos?':'Rejeitar esta mesa?'))return;
     const note=approved?'':(prompt('Motivo da rejeição (opcional):','')||'');
-    try{await api('/api/tables/'+b.dataset.review,{method:'PUT',body:{status:b.dataset.status,note}});toast(approved?'Mesa aprovada.':'Mesa rejeitada.');await reloadAll();await loadTables()}catch(err){toast(err.message,true)}
+    try{await api('/api/tables/'+b.dataset.review,{method:'PUT',body:{status:b.dataset.status,note}});
+      const reviewed=tables.find(t=>t.id===Number(b.dataset.review));
+      if(approved && reviewed && state.season!=='all' && String(state.season)!==String(reviewed.season_id)){state.season=String(reviewed.season_id)}
+      await reloadAll();await loadTables();
+      toast(approved?'Mesa aprovada e pontos confirmados no ranking da temporada.':'Mesa rejeitada.');
+    }catch(err){toast(err.message,true)}
   }));
   $('tableReviewList').querySelectorAll('button[data-remove-table]').forEach(b=>b.addEventListener('click',async()=>{
     if(!confirm('Excluir esta mesa e os resultados vinculados? Essa ação não pode ser desfeita.'))return;
@@ -611,12 +616,13 @@ function renderLeagueEvents(){
   const dateCmp=(a,b)=>a.event_date.localeCompare(b.event_date)*dateDir;
   const seasonCmp=(a,b)=>(eventSeasonValue(a)-eventSeasonValue(b))*seasonDir;
   const visibleEvents=events.filter(e=>e.name.toLocaleLowerCase().includes(search))
-    .sort((a,b)=>(primary==='season'?(seasonCmp(a,b)||dateCmp(a,b)):(dateCmp(a,b)||seasonCmp(a,b)))||(a.id-b.id));
-  $('eventList').innerHTML=visibleEvents.length?visibleEvents.map(ev=>`<article class="event-list-item ${ev.id===state.selectedEventId?'selected':''}">
+    .sort((a,b)=>Number(Boolean(b.active_round))-Number(Boolean(a.active_round))
+      || (primary==='season'?(seasonCmp(a,b)||dateCmp(a,b)):(dateCmp(a,b)||seasonCmp(a,b)))||(b.id-a.id));
+  $('eventList').innerHTML=visibleEvents.length?visibleEvents.map(ev=>`<article class="event-list-item ${ev.id===state.selectedEventId?'selected':''} ${ev.active_round?'event-active':''} ${ev.ended_at?'event-closed':''}">
    <a class="event-list-select" href="#/admin/events/${ev.id}" target="_blank" rel="noopener noreferrer" data-event-open="${ev.id}" ${ev.id===state.selectedEventId?'aria-current="page"':''}>
     <span class="event-day">${safe(fmtDate(ev.event_date))}</span><strong>${safe(ev.name)}</strong>
-    <small>${safe(ev.season_name)} · ${safe(ev.episode)} · ${ev.total_registered} inscrito(s) · ${ev.registrations_open?'INSCRIÇÕES ABERTAS':'INSCRIÇÕES FECHADAS'}</small>
-   </a><a class="event-qr-btn" href="#/invite/${ev.id}" data-event-invite="${ev.id}" title="Abrir QR Code e link de inscrição" aria-label="QR Code e link para ${safe(ev.name)}">▦ QR</a><button class="event-edit-btn" type="button" data-event-edit="${ev.id}" aria-label="Editar evento ${safe(ev.name)}">Editar</button><button class="event-delete-btn" type="button" data-event-delete="${ev.id}" aria-label="Excluir evento ${safe(ev.name)}">Excluir</button>
+    <small>${safe(ev.season_name)} · ${safe(ev.episode)} · ${ev.total_registered} inscrito(s) · ${ev.ended_at?'EVENTO ENCERRADO':ev.active_round?'● RODADA ATIVA':ev.registrations_open?'INSCRIÇÕES ABERTAS':'INSCRIÇÕES FECHADAS'}</small>
+   </a><a class="event-qr-btn" href="#/invite/${ev.id}" data-event-invite="${ev.id}" title="Abrir QR Code e link de inscrição" aria-label="QR Code e link para ${safe(ev.name)}">▦ QR</a>${ev.ended_at?'':`<button class="event-edit-btn" type="button" data-event-edit="${ev.id}" aria-label="Editar evento ${safe(ev.name)}">Editar</button>`}<button class="event-delete-btn" type="button" data-event-delete="${ev.id}" aria-label="Excluir evento ${safe(ev.name)}">Excluir</button>
   </article>`).join(''):'<p class="muted-note">Nenhum evento encontrado para os filtros selecionados.</p>';
 
   $('eventList').querySelectorAll('[data-event-edit]').forEach(btn=>btn.addEventListener('click',()=>{
@@ -646,8 +652,9 @@ function renderEventRoster(){
   $('eventRosterTitle').textContent=ev?ev.name:'Lista de jogadores';
   $('eventRosterSubtitle').textContent=ev?`${fmtDate(ev.event_date)} · ${ev.season_name} · ${ev.episode}`:'Cadastre e selecione um evento para inscrever jogadores.';
   $('eventRosterContent').classList.toggle('hidden',!ev);
-  $('eventRosterStats').innerHTML=ev?`<a class="event-roster-qr" id="eventRosterQR" href="#/invite/${ev.id}" title="Abrir convite e QR Code">▦ QR / Link</a><a class="event-roster-qr" href="#/rounds/${safe(ev.rounds_share_token)}" target="_blank" rel="noopener noreferrer" title="Link privado para as rodadas">🔗 Rodadas (link privado)</a><span>${ev.rounds.length?`Rodada ${ev.rounds.at(-1).round_no} · ${ev.rounds.at(-1).status==='finished'?'Finalizada':ev.rounds.at(-1).status==='published'?'Publicada':'Rascunho'}`:'Nenhuma rodada'}</span><span>${ev.total_registered} inscritos</span><span>${ev.total_checkin} check-ins</span><span>${ev.total_paid} pagos</span><span>${ev.total_decklists_ok} decklists OK</span><button type="button" id="toggleEventOpen" class="event-open-switch ${ev.registrations_open?'on':''}" aria-pressed="${Boolean(ev.registrations_open)}">${ev.registrations_open?'● Inscrições abertas':'○ Abrir inscrições'}</button>`:'';
-  if(ev){
+  $('eventRegisterForm').classList.toggle('hidden',Boolean(ev?.ended_at));
+  $('eventRosterStats').innerHTML=ev?`<a class="event-roster-qr" id="eventRosterQR" href="#/invite/${ev.id}" title="Abrir convite e QR Code">▦ QR / Link</a><a class="event-roster-qr" href="#/rounds/${safe(ev.rounds_share_token)}" target="_blank" rel="noopener noreferrer" title="Link privado para as rodadas">🔗 Rodadas (link privado)</a><span>${ev.rounds.length?`Rodada ${ev.rounds.at(-1).round_no} · ${ev.rounds.at(-1).status==='finished'?'Finalizada':ev.rounds.at(-1).status==='published'?'Publicada':'Rascunho'}`:'Nenhuma rodada'}</span><span>${ev.total_registered} inscritos</span><span>${ev.total_checkin} check-ins</span><span>${ev.total_paid} pagos</span><span>${ev.total_decklists_ok} decklists OK</span>${ev.ended_at?'<span class="event-status-closed">✓ Evento encerrado</span>':`<button type="button" id="toggleEventOpen" class="event-open-switch ${ev.registrations_open?'on':''}" aria-pressed="${Boolean(ev.registrations_open)}">${ev.registrations_open?'● Inscrições abertas':'○ Abrir inscrições'}</button><button type="button" id="closeEventBtn" class="event-close-button" ${ev.rounds.length && ev.rounds.every(r=>r.status==='finished')?'':'disabled title="Finalize todas as rodadas antes de encerrar o evento"'}>Encerrar evento</button>`}`:'';
+  if(ev && !ev.ended_at){
     $('toggleEventOpen').addEventListener('click',async e=>{
       const next=!Boolean(ev.registrations_open);
       if(!confirm(`${next?'Abrir':'Fechar'} as inscrições públicas para ${ev.name}?`))return;
@@ -655,6 +662,17 @@ function renderEventRoster(){
       try{
         await api(`/api/admin/events/${ev.id}`,{method:'PUT',body:{registrations_open:next}});
         await loadLeagueEvents();await loadOpenEvents();toast(next?'Inscrições abertas.':'Inscrições encerradas.');
+      }catch(err){toast(err.message,true);await loadLeagueEvents()}
+    });
+    $('closeEventBtn').addEventListener('click',async e=>{
+      if(e.currentTarget.disabled)return;
+      if(!confirm(`Encerrar o evento "${ev.name}" definitivamente?
+
+Todas as rodadas devem estar finalizadas. O evento não aceitará inscrições nem novos pareamentos, e todo o histórico será preservado.`))return;
+      e.currentTarget.disabled=true;
+      try{
+        await api(`/api/admin/events/${ev.id}/close`,{method:'POST',body:{}});
+        await loadLeagueEvents();await loadOpenEvents();toast('Evento encerrado. Ranking e histórico preservados.');
       }catch(err){toast(err.message,true);await loadLeagueEvents()}
     });
   }
@@ -739,12 +757,12 @@ function renderEventRounds(){
   const unfinished=rounds.find(r=>r.status!=='finished');
   const next=unfinished?.round_no||(rounds.length?rounds.at(-1).round_no+1:1);
   const eligible=ev.registrations.filter(r=>r.checkin&&r.paid&&(r.dropped_after_round===null||r.dropped_after_round>=next));
-  const canGenerate=next<=12 && (!unfinished||unfinished.status==='draft');
-  box.innerHTML=`<div class="round-controls"><div><strong>${eligible.length} jogador(es) apto(s) para a rodada ${next}</strong><p class="muted-note">Participantes com check-in e pagamento, excluindo drops. Mesas de 3 ou 4, sem bye. Rodada seguinte somente após finalizar a anterior.</p></div>
+  const canGenerate=!ev.ended_at && next<=12 && (!unfinished||unfinished.status==='draft');
+  box.innerHTML=`${ev.ended_at?'<div class="helper-panel">Evento encerrado: pareamentos preservados somente para consulta.</div>':''}<div class="round-controls"><div><strong>${eligible.length} jogador(es) apto(s) para a rodada ${next}</strong><p class="muted-note">Participantes com check-in e pagamento, excluindo drops. Mesas de 3 ou 4, sem bye. Rodada seguinte somente após finalizar a anterior.</p></div>
     <form id="generateRoundForm" class="round-generate-form"><label>Próxima rodada<input type="number" id="generateRoundNum" min="1" max="12" value="${next}" readonly></label>
     <label>Modo<select id="generateRoundMode"><option value="auto">Automático: True Swiss → Swiss</option><option value="true_swiss">Somente True Swiss estrito</option><option value="swiss">Swiss (pontuação próxima)</option></select></label>
     <button class="button-primary" type="submit" ${canGenerate?'':'disabled'}>${unfinished?.status==='draft'?'Regenerar rascunho':'Gerar pareamentos'}</button></form></div>
-    ${!canGenerate?'<p class="helper-panel">Finalize a rodada publicada antes de gerar a próxima. Uma rodada terminada não pode ser modificada.</p>':''}
+    ${!canGenerate&&!ev.ended_at?'<p class="helper-panel">Finalize a rodada publicada antes de gerar a próxima. Uma rodada terminada não pode ser modificada.</p>':''}
     <div class="round-list">${rounds.length?rounds.map(r=>{
       const finished=r.status==='finished',published=r.status==='published';
       const badge=finished?'✓ Finalizada':published?'● Publicada':'○ Rascunho';
@@ -1079,6 +1097,9 @@ function bindEvents(){
  }catch(err){toast(err.message,true)}});
  $('loginForm').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/login',{method:'POST',body:{username:$('adminUsername').value.trim(),password:$('adminPassword').value}});$('adminPassword').value='';toast('Acesso autorizado.');await refreshAdminSession()}catch(err){toast(err.message,true)}});
  $('logoutBtn').addEventListener('click',async()=>{try{await api('/api/logout',{method:'POST',body:{}});state.admin=null;await refreshAdminSession();toast('Sessão encerrada.')}catch(err){toast(err.message,true)}});
+ ['eventAgendaSearch','eventAgendaDate','eventAgendaSeason','eventAgendaPrimary'].forEach(id=>{
+   $(id).addEventListener(id==='eventAgendaSearch'?'input':'change',()=>renderLeagueEvents());
+ });
  $('eventForm').addEventListener('submit',async e=>{
    e.preventDefault();
    const editing=state.editingEventId;

@@ -243,3 +243,22 @@ a:focus-visible{outline:2px solid var(--lime);outline-offset:3px}
 .round-generate-form select{min-width:190px}
 @media(max-width:900px){.event-filter-bar{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:540px){.event-filter-bar{grid-template-columns:1fr}.event-detail-nav{flex-direction:column;align-items:flex-start}.event-actions-dropdown{min-width:200px}}
+
+/* v2.3.5 — controles uniformes e evento ativo destacado na agenda */
+.event-filter-bar{gap:12px;align-items:end}
+.event-filter-bar label{font-weight:750;font-size:11px;letter-spacing:.2px;color:#b8c7df;gap:8px}
+.event-filter-bar input,.event-filter-bar select{
+  appearance:auto;display:block;min-height:46px;border-radius:11px;
+  border:1px solid #43516a;background:#161f31;color:#f4f6ff;
+  font-size:13px;font-weight:700;padding:11px 13px;
+  outline:none;transition:border-color .16s,box-shadow .16s;
+}
+.event-filter-bar input:focus,.event-filter-bar select:focus{border-color:#c6ef50;box-shadow:0 0 0 3px #c6ef502a}
+.event-filter-bar input::placeholder{color:#8698b3;font-weight:450}
+.event-list-item.event-active{border-color:#b8d969;box-shadow:inset 3px 0 0 #c6ef50;background:#1a2a32}
+.event-list-item.event-active .event-list-select small{color:#d3ed9b;font-weight:800}
+.event-list-item.event-closed{opacity:.83}
+.event-close-button{border:1px solid #b16874;background:#482530;color:#ffe0e4;padding:9px 12px;border-radius:9px;font-weight:850;cursor:pointer}
+.event-close-button:hover:not(:disabled){background:#67323e}
+.event-close-button:disabled{opacity:.48;cursor:not-allowed}
+.event-status-closed{border:1px solid #7d9954;background:#2e3a2a;color:#d9f4ab;border-radius:9px;padding:9px 11px;font-weight:800}
