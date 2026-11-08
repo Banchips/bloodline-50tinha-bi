@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Bloodline 50tinha BI — servidor sem dependencias externas (Python 3.10+)."""
 import argparse
+import base64
 import csv
 from contextlib import contextmanager, closing
 import getpass
@@ -36,6 +37,9 @@ PUBLIC_ACTIONS_LOCK = threading.Lock()
 LOGIN_ATTEMPTS = {}
 LOGIN_LOCK = threading.Lock()
 DB_LOCK = threading.RLock()  # protect multi-step writes and sqlite locked issues
+RECOVERY_ATTEMPTS = {}
+RECOVERY_LOCK = threading.Lock()
+RECOVERY_CODE_LIFETIME = 15 * 60
 
 class UserInputError(Exception):
     pass
@@ -245,6 +249,23 @@ def init_db():
             db.execute('UPDATE player_accounts SET username=? WHERE player_id=?',
                        ('jogador' + str(row['player_id']), row['player_id']))
         db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_player_accounts_username ON player_accounts(username COLLATE NOCASE)')
+        # v2.4.0: recuperação de contas sem e-mail/telefone. Apenas hashes no banco.
+        recovery_cols={r['name'] for r in db.execute('PRAGMA table_info(player_accounts)')}
+        if 'recovery_code_hash' not in recovery_cols:
+            db.execute('ALTER TABLE player_accounts ADD COLUMN recovery_code_hash TEXT')
+        if 'recovery_code_created_at' not in recovery_cols:
+            db.execute('ALTER TABLE player_accounts ADD COLUMN recovery_code_created_at TEXT')
+        db.execute('''CREATE TABLE IF NOT EXISTS player_recovery_temporary (
+           player_id INTEGER PRIMARY KEY REFERENCES player_accounts(player_id) ON DELETE CASCADE,
+           token_hash TEXT NOT NULL, issued_by INTEGER REFERENCES admins(id) ON DELETE SET NULL,
+           expires_at INTEGER NOT NULL,
+           issued_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)''')
+        db.execute('''CREATE TABLE IF NOT EXISTS player_recovery_audit (
+           id INTEGER PRIMARY KEY, player_id INTEGER REFERENCES players(id) ON DELETE SET NULL,
+           admin_id INTEGER REFERENCES admins(id) ON DELETE SET NULL,
+           action TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '',
+           created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)''')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_player_recovery_audit_time ON player_recovery_audit(created_at DESC)')
         # As sessões antigas da v2.1 não estavam associadas a um usuário.
         # Invalidá-las ao migrar impede que cookies antigos deem acesso irrestrito.
         session_cols = {r['name'] for r in db.execute('PRAGMA table_info(sessions)')}
@@ -300,6 +321,76 @@ def password_matches(password, row):
         return False
 
 
+# Códigos de alta entropia (160 bits), base32 para facilitar cópia sem dados pessoais.
+def new_recovery_code(temporary=False):
+    raw=base64.b32encode(secrets.token_bytes(20)).decode('ascii').rstrip('=')
+    return ('BLT-' if temporary else 'BL-')+'-'.join(raw[i:i+4] for i in range(0,len(raw),4))
+
+
+def recovery_hash(code):
+    return hashlib.sha256(str(code).encode('ascii')).hexdigest()
+
+
+def recovery_code_matches(candidate, stored):
+    try:
+        code=str(candidate).strip().upper()
+        if len(code)>75: return False
+        valid=bool(re.fullmatch(r'BLT?-(?:[A-Z2-7]{4}-){7}[A-Z2-7]{4}',code))
+        actual=recovery_hash(code) if valid else '0'*64
+        return hmac.compare_digest(actual,stored or '0'*64) and valid and bool(stored)
+    except (ValueError,UnicodeEncodeError,TypeError):
+        return False
+
+
+def rotate_player_recovery_code(db, player_id, action='PERSONAL_ISSUED', admin_id=None):
+    code=new_recovery_code()
+    db.execute('UPDATE player_accounts SET recovery_code_hash=?, recovery_code_created_at=CURRENT_TIMESTAMP WHERE player_id=?',
+               (recovery_hash(code),player_id))
+    db.execute('DELETE FROM player_recovery_temporary WHERE player_id=?',(player_id,))
+    db.execute('INSERT INTO player_recovery_audit(player_id,admin_id,action) VALUES(?,?,?)',(player_id,admin_id,action))
+    return code
+
+
+def throttle_recovery(ip,username):
+    now=time.time()
+    # Por usuário + origem; não trava indiscriminadamente dezenas de jogadores no mesmo Wi-Fi.
+    key=(str(ip),str(username).casefold())
+    with RECOVERY_LOCK:
+        recent=[t for t in RECOVERY_ATTEMPTS.get(key,[]) if now-t<900]
+        if len(recent)>=10:
+            raise UserInputError('Muitas tentativas. Tente novamente mais tarde.')
+        recent.append(now)
+        RECOVERY_ATTEMPTS[key]=recent
+        # Limita entradas órfãs ao longo de dias de operação.
+        if len(RECOVERY_ATTEMPTS)>4000:
+            for k,v in list(RECOVERY_ATTEMPTS.items()):
+                if not v or now-v[-1]>900:RECOVERY_ATTEMPTS.pop(k,None)
+
+
+def redeem_player_recovery(db, username, code, new_password):
+    # Mesmo erro para contas inexistentes, desativadas, código expirado ou inválido.
+    username=txt(username,'Nome de usuário',100)
+    validate_password(new_password)
+    account=db.execute('SELECT * FROM player_accounts WHERE username=? COLLATE NOCASE',(username,)).fetchone()
+    generic='Código inválido ou expirado. Verifique os dados ou procure a organização.'
+    personal_match=recovery_code_matches(code,account['recovery_code_hash'] if account else None)
+    temporary=db.execute('SELECT * FROM player_recovery_temporary WHERE player_id=?',(account['player_id'],)).fetchone() if account else None
+    temporal_match=recovery_code_matches(code,temporary['token_hash'] if temporary else None)
+    if not account or not account['active'] or account['approval_status']!='approved' or not (personal_match or (temporal_match and temporary['expires_at']>int(time.time()))):
+        raise UserInputError(generic)
+    # SQLite transaction protected by DB_LOCK: code consumed once even with racing requests.
+    salt,digest,iters=password_digest(new_password)
+    player_id=account['player_id']
+    db.execute('UPDATE player_accounts SET password_salt=?,password_hash=?,password_iterations=? WHERE player_id=?',
+               (salt,digest,iters,player_id))
+    db.execute('DELETE FROM player_sessions WHERE player_id=?',(player_id,))
+    db.execute('INSERT INTO player_recovery_audit(player_id,admin_id,action) VALUES(?,?,?)',
+               (player_id,temporary['issued_by'] if temporal_match and temporary else None,
+                'TEMPORARY_USED' if temporal_match else 'PERSONAL_USED'))
+    # Independente do método, antiga chave pessoal e temporária deixam de valer.
+    return rotate_player_recovery_code(db,player_id,action='PERSONAL_ROTATED')
+
+
 def register_player_account(db, username, password, player_id=None, player_name=None):
     username = validate_username(username)
     salt, digest, iters = password_digest(password)
@@ -319,7 +410,8 @@ def register_player_account(db, username, password, player_id=None, player_name=
     db.execute('''INSERT INTO player_accounts(player_id,username,password_salt,password_hash,
                   password_iterations,active,approval_status,created_via) VALUES(?,?,?,?,?,0,'pending','self')''',
                (pid,username,salt,digest,iters))
-    return pid
+    code=rotate_player_recovery_code(db,pid)
+    return pid,code
 
 
 def list_player_access_requests(db):
@@ -1680,7 +1772,7 @@ def swap_event_round_players(db,event_id,round_no,first,second):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = 'BloodlineBI/2.3.4'
+    server_version = 'BloodlineBI/2.4.0'
 
     def log_message(self, fmt, *args):
         print('%s - %s' % (self.address_string(), fmt % args))
@@ -1735,6 +1827,11 @@ class Handler(BaseHTTPRequestHandler):
                   JOIN players p ON p.id=pa.player_id
                   WHERE ps.token_hash=? AND ps.expires_at>? AND pa.active=1 AND pa.approval_status='approved' ''',
                   (hashed,int(time.time()))).fetchone()
+
+    def player_has_recovery_code(self, player_id):
+        with conn_db() as db:
+            row=db.execute('SELECT recovery_code_hash FROM player_accounts WHERE player_id=?',(player_id,)).fetchone()
+            return bool(row and row['recovery_code_hash'])
 
     def authed(self):
         return self.current_admin() is not None
@@ -1854,6 +1951,16 @@ class Handler(BaseHTTPRequestHandler):
                     return self.respond(403,{'error':'Link privado de rodadas obrigatório.'})
                 with conn_db() as db:
                     return self.respond(200,{'events':published_event_rounds(db,token)})
+            if path == '/api/admin/player-recovery/audit':
+                if not self.require_admin():return
+                with conn_db() as db:
+                    rows=db.execute('''SELECT a.action,a.reason,a.created_at,a.player_id,
+                      p.name AS player_name,ad.username AS admin_username
+                      FROM player_recovery_audit a
+                      LEFT JOIN players p ON p.id=a.player_id
+                      LEFT JOIN admins ad ON ad.id=a.admin_id
+                      ORDER BY a.id DESC LIMIT 100''').fetchall()
+                    return self.respond(200,{'audit':[dict(x) for x in rows]})
             if path == '/api/admin/player-accounts':
                 if not self.require_admin():return
                 with conn_db() as db:
@@ -1861,7 +1968,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/player/session':
                 player=self.current_player()
                 return self.respond(200, {'player':bool(player), 'id':player['id'] if player else None,
-                                          'name':player['name'] if player else None})
+                                          'name':player['name'] if player else None,
+                    'has_recovery_code':bool(player and self.player_has_recovery_code(player['id']))})
             if path == '/api/player/my-rounds':
                 player=self.current_player()
                 if player is None:return self.respond(401,{'error':'Entre na área do jogador.'})
@@ -1977,15 +2085,60 @@ class Handler(BaseHTTPRequestHandler):
     def write(self, method):
         try:
             path = urlparse(self.path).path
+            if path == '/api/player/recovery/redeem' and method == 'POST':
+                obj=self.read_json()
+                username=str(obj.get('username') or '').strip()
+                throttle_recovery(self.client_address[0],username)
+                if obj.get('new_password') != obj.get('confirm_password'):
+                    raise UserInputError('As senhas não coincidem.')
+                with DB_LOCK,conn_db() as db:
+                    new_code=redeem_player_recovery(db,username,obj.get('code'),obj.get('new_password'))
+                    db.commit()
+                return self.respond(200,{'ok':True,'recovery_code':new_code,
+                    'message':'Senha redefinida. Suas sessões antigas foram encerradas.'})
+            if path == '/api/player/recovery/regenerate' and method == 'POST':
+                obj=self.read_json()
+                player=self.current_player()
+                if not player:return self.respond(401,{'error':'Entre em sua conta para gerar o código pessoal.'})
+                with DB_LOCK,conn_db() as db:
+                    account=db.execute('SELECT * FROM player_accounts WHERE player_id=?',(player['id'],)).fetchone()
+                    if not password_matches(obj.get('password',''),account):
+                        return self.respond(403,{'error':'Senha atual incorreta.'})
+                    new_code=rotate_player_recovery_code(db,player['id'])
+                    db.commit()
+                return self.respond(200,{'ok':True,'recovery_code':new_code})
+            if path == '/api/admin/player-recovery/temporary' and method == 'POST':
+                if not self.require_admin():return
+                obj=self.read_json()
+                admin=self.current_admin()
+                pid=int_id(obj.get('player_id'),'Jogador')
+                reason=txt(obj.get('reason'),'Motivo da recuperação',300)
+                if len(reason)<8:raise UserInputError('Informe um motivo com pelo menos 8 caracteres.')
+                with DB_LOCK,conn_db() as db:
+                    account=db.execute('SELECT * FROM player_accounts WHERE player_id=?',(pid,)).fetchone()
+                    if not account or not account['active'] or account['approval_status']!='approved':
+                        raise UserInputError('Conta de jogador ativa e aprovada não encontrada.')
+                    code=new_recovery_code(temporary=True)
+                    expires_at=int(time.time())+RECOVERY_CODE_LIFETIME
+                    db.execute('''INSERT INTO player_recovery_temporary(player_id,token_hash,issued_by,expires_at)
+                       VALUES(?,?,?,?) ON CONFLICT(player_id) DO UPDATE SET
+                       token_hash=excluded.token_hash,issued_by=excluded.issued_by,
+                       expires_at=excluded.expires_at,issued_at=CURRENT_TIMESTAMP''',
+                       (pid,recovery_hash(code),admin['id'],expires_at))
+                    db.execute('''INSERT INTO player_recovery_audit(player_id,admin_id,action,reason)
+                       VALUES(?,?,'TEMPORARY_ISSUED',?)''',(pid,admin['id'],reason))
+                    db.commit()
+                return self.respond(200,{'ok':True,'temporary_code':code,'expires_in_seconds':RECOVERY_CODE_LIFETIME})
             if path == '/api/player/register' and method == 'POST':
                 obj=self.read_json()
                 throttle_public(self.client_address[0], 'player_registration', 8)
                 with DB_LOCK,conn_db() as db:
-                    pid=register_player_account(db,obj.get('username'),obj.get('password'),
+                    pid,code=register_player_account(db,obj.get('username'),obj.get('password'),
                              obj.get('player_id'),obj.get('player_name'))
                     db.commit()
                 return self.respond(201,{'ok':True,'player_id':pid,'status':'pending',
-                         'message':'Conta solicitada. Aguarde a confirmação da organização (somente uma vez).'} )
+                         'recovery_code':code,
+                         'message':'Conta solicitada. Guarde agora seu código pessoal, exibido apenas uma vez.'} )
             access_action=re.fullmatch(r'/api/admin/player-accounts/(\d+)/(approve|reject)',path)
             if access_action and method=='POST':
                 if not self.require_admin():return

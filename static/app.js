@@ -14,7 +14,7 @@ function isoFromBrazilianDate(value){
 }
 const resultLabels = {V:'Vitória · 3 pts',E:'Empate · 1 pt',D:'Derrota · 0 pts'};
 const colors = ['#c6ef50','#9e8eff','#69d7e3','#f2b47c','#f18ba8'];
-const state = {public:null, admin:null, season:'all', adminMode:false, loggedIn:false, editing:null, editingDeck:null, tables:[], canManageAdmins:false, admins:[], events:[], selectedEventId:null, editingEventId:null, openEvents:[],selectedSignupEventId:null,publishedRounds:[],selectedRoundEventId:null, inviteReturnTab:'events', currentPanel:null,sessionChecked:false,sessionLoading:false,playerSession:null,playerRounds:[],roundShareToken:null};
+const state = {public:null, admin:null, season:'all', adminMode:false, loggedIn:false, editing:null, editingDeck:null, tables:[], canManageAdmins:false, admins:[], events:[], selectedEventId:null, editingEventId:null, openEvents:[],selectedSignupEventId:null,publishedRounds:[],selectedRoundEventId:null, inviteReturnTab:'events', currentPanel:null,sessionChecked:false,sessionLoading:false,playerSession:null,playerRounds:[],roundShareToken:null,playerAccounts:[]};
 let toastTimer;
 function toast(msg,error=false){const t=$('toast');t.textContent=msg;t.classList.toggle('error',error);t.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('visible'),4500)}
 async function api(path,options={}){
@@ -352,7 +352,23 @@ function renderAdmin(){
  renderExclusions();renderAdminMatches();renderTableReview();
 }
 function renderManager(id,items,category){
- $(id).innerHTML=items.length?items.map(item=>`<div class="manager-item"><span>${safe(item.name)} ${category==='seasons'?`<small>(ordem ${item.sort_order})</small>`:''}</span><div class="mini-buttons"><button type="button" data-rename-type="${category}" data-rename-id="${item.id}">Renomear</button><button type="button" class="danger" data-delete-category="${category}" data-delete-id="${item.id}">Excluir</button></div></div>`).join(''):'<p class="muted-note">Nenhum cadastro ainda.</p>';
+ $(id).innerHTML=items.length?items.map(item=>{
+   const account=category==='players'?state.playerAccounts.find(a=>a.player_id===item.id):null;
+   const recovery=account?`<details class="admin-recovery-fold"><summary>🔑 Recuperação de acesso · ${safe(account.username)} (${account.approval_status==='approved'&&account.active?'ativa':'aguardando aprovação'})</summary>
+     ${account.approval_status==='approved'&&account.active?`<form class="stack-form admin-recovery-form" data-recovery-id="${item.id}"><label>Motivo da recuperação (auditoria)<input name="reason" required minlength="8" maxlength="300" placeholder="Ex.: Identidade conferida pessoalmente (não registre dados pessoais)"></label><button type="submit" class="button-outline">Gerar código temporário · 15 min</button></form>`:'<p class="muted-note">A conta precisa estar aprovada e ativa.</p>'}
+     <p class="muted-note">O código pessoal antigo nunca é exibido a administradores.</p></details>`:'';
+   return `<div class="manager-item manager-item-recovery"><div class="manager-identity"><span>${safe(item.name)} ${category==='seasons'?`<small>(ordem ${item.sort_order})</small>`:''}</span>${recovery}</div><div class="mini-buttons"><button type="button" data-rename-type="${category}" data-rename-id="${item.id}">Renomear</button><button type="button" class="danger" data-delete-category="${category}" data-delete-id="${item.id}">Excluir</button></div></div>`;
+ }).join(''):'<p class="muted-note">Nenhum cadastro ainda.</p>';
+ $(id).querySelectorAll('.admin-recovery-form').forEach(form=>form.addEventListener('submit',async e=>{
+   e.preventDefault();
+   const pid=Number(form.dataset.recoveryId),name=items.find(x=>x.id===pid)?.name||'jogador';
+   if(!confirm(`Confirmou a identidade de ${name}? Um novo código invalidará o temporário anterior.`))return;
+   const button=form.querySelector('button');button.disabled=true;
+   try{
+     const response=await api('/api/admin/player-recovery/temporary',{method:'POST',body:{player_id:pid,reason:form.elements.reason.value.trim()}});
+     form.reset();showRecoveryCode(response.temporary_code,`Código temporário — ${name}`);await refreshRecoveryAudit();
+   }catch(err){toast(err.message,true)}finally{button.disabled=false}
+ }));
  $(id).querySelectorAll('button[data-rename-id]').forEach(b=>b.addEventListener('click',async()=>{
    const old=items.find(i=>i.id===Number(b.dataset.renameId));const name=prompt('Novo nome:',old.name);
    if(name===null||!name.trim()||name.trim()===old.name)return;
@@ -1037,8 +1053,10 @@ async function refreshPlayerSession(){
     if(state.currentPanel==='signup')renderSignupForm();
     if(current.player){
       $('playerIdentity').textContent=current.name;
+      $('recoverySetupHint').classList.toggle('hidden',Boolean(current.has_recovery_code));
       await Promise.all([refreshPlayerRounds(),refreshPlayerResults()]);
     }else{
+      $('recoverySetupHint').classList.add('hidden');
       state.playerRounds=[];state.playerStatsSeason='all';
       $('playerRoundsList').replaceChildren();$('playerRoundsSection').classList.add('hidden');
       $('playerStatsContent').innerHTML='<p class="muted-note">Entre para consultar suas estatísticas.</p>';
@@ -1190,10 +1208,36 @@ function renderPlayerResults(data){
     <div class="player-stat-group"><h3>Decks utilizados</h3><div class="player-table-scroll"><table class="player-stat-table"><thead><tr><th>Deck / Tribo</th><th>Pontos</th><th>Partidas</th><th>V / E / D</th><th>Win rate</th></tr></thead><tbody>${decks||'<tr><td colspan="5" class="muted-note">Nenhum deck vinculado a partidas nesta seleção. Partidas sem deck ainda contam na tribo.</td></tr>'}</tbody></table></div></div>
     <div class="player-stat-group"><h3>Histórico recente</h3><div class="player-table-scroll"><table class="player-stat-table"><thead><tr><th>Data</th><th>Evento</th><th>Tribo / Deck</th><th>Resultado</th><th>Pontos</th></tr></thead><tbody>${history||'<tr><td colspan="5" class="muted-note">Nenhum resultado aprovado nesta seleção.</td></tr>'}</tbody></table></div><p class="muted-note">Exibindo até 60 participações recentes. Tribos que não pontuam continuam no histórico, com zero ponto válido.</p></div>`;
 }
+function showRecoveryCode(code,title){
+  const modal=$('recoveryCodeOverlay');
+  $('recoveryCodeTitle').textContent=title||'Seu código de recuperação';
+  $('recoveryCodeDisplay').textContent=String(code);
+  modal.classList.remove('hidden');
+  $('copyRecoveryCode').focus();
+}
+function closeRecoveryCode(){
+  $('recoveryCodeOverlay').classList.add('hidden');
+  $('recoveryCodeDisplay').textContent='';
+}
+async function refreshRecoveryAudit(){
+  if(!state.loggedIn||!$('playerRecoveryAuditList'))return;
+  try{
+    const d=await api('/api/admin/player-recovery/audit');
+    const labels={TEMPORARY_ISSUED:'Código temporário gerado',TEMPORARY_USED:'Código temporário utilizado',PERSONAL_USED:'Código pessoal utilizado',PERSONAL_ISSUED:'Código pessoal gerado',PERSONAL_ROTATED:'Código pessoal substituído'};
+    $('playerRecoveryAuditList').innerHTML=d.audit.length?d.audit.map(x=>`<div class="manager-item recovery-audit-row"><div><strong>${safe(x.player_name||'Jogador excluído')}</strong><small>${safe(labels[x.action]||x.action)} · ${fmtDateTime(x.created_at)} · ${safe(x.admin_username||'Jogador')}</small>${x.reason?`<small>Motivo: ${safe(x.reason)}</small>`:''}</div></div>`).join(''):'<p class="muted-note">Nenhuma recuperação registrada.</p>';
+  }catch(e){$('playerRecoveryAuditList').textContent=e.message}
+}
+function renderPlayerAccountRecovery(){
+  if(!state.admin?.master?.players)return;
+  renderManager('playerManager',state.admin.master.players,'players');
+}
 async function refreshPlayerAccessRequests(){
   try{
     const data=await api('/api/admin/player-accounts');
-    const items=(data.accounts||[]).filter(a=>a.approval_status==='pending');
+    state.playerAccounts=data.accounts||[];
+    renderPlayerAccountRecovery();
+    await refreshRecoveryAudit();
+    const items=state.playerAccounts.filter(a=>a.approval_status==='pending');
     const box=$('playerAccessRequests');
     if(!box)return;
     box.innerHTML=items.length?items.map(a=>`<div class="access-request-row">
@@ -1210,6 +1254,32 @@ async function refreshPlayerAccessRequests(){
   }catch(err){if($('playerAccessRequests'))$('playerAccessRequests').textContent='Falha ao carregar solicitações: '+err.message;}
 }
 function bindEvents(){
+ $('copyRecoveryCode').addEventListener('click',async()=>{
+   try{await navigator.clipboard.writeText($('recoveryCodeDisplay').textContent);toast('Código copiado. Guarde-o em local privado.')}catch(e){toast('Selecione o código na tela e copie manualmente.',true)}
+ });
+ $('closeRecoveryCode').addEventListener('click',closeRecoveryCode);
+ $('playerForgotForm').addEventListener('submit',async e=>{
+   e.preventDefault();
+   const password=$('recoveryNewPassword').value;
+   if(password!==$('recoveryConfirmPassword').value)return toast('As senhas não coincidem.',true);
+   const form=e.currentTarget,button=form.querySelector('button[type=submit]');button.disabled=true;
+   try{
+     const response=await api('/api/player/recovery/redeem',{method:'POST',body:{
+       username:$('recoveryUsername').value.trim(),code:$('recoveryCodeInput').value.trim(),
+       new_password:password,confirm_password:$('recoveryConfirmPassword').value}});
+     form.reset();toast('Senha alterada. Faça login com sua nova senha.');
+     showRecoveryCode(response.recovery_code,'Novo código pessoal de recuperação');
+   }catch(err){toast(err.message,true)}finally{button.disabled=false}
+ });
+ $('playerRecoveryGenerateForm').addEventListener('submit',async e=>{
+   e.preventDefault();const form=e.currentTarget,button=form.querySelector('button');button.disabled=true;
+   try{
+     const response=await api('/api/player/recovery/regenerate',{method:'POST',body:{password:$('playerRecoveryConfirmPassword').value}});
+     form.reset();$('recoverySetupHint').classList.add('hidden');
+     if(state.playerSession)state.playerSession.has_recovery_code=true;
+     showRecoveryCode(response.recovery_code,'Novo código pessoal de recuperação');
+   }catch(err){toast(err.message,true)}finally{button.disabled=false}
+ });
  window.addEventListener('hashchange',()=>applyRoute(true));
  $('seasonSelect').addEventListener('change',e=>{state.season=e.target.value;loadPublic()});
  $('rankingSearch').addEventListener('input',renderRanking);$('matchesSearch').addEventListener('input',renderMatches);
@@ -1233,6 +1303,7 @@ function bindEvents(){
      const response=await api('/api/player/register',{method:'POST',body});
      $('playerRegisterForm').reset();$('playerRegisterNewNameWrap').classList.remove('hidden');
      $('playerRegisterMessage').textContent=response.message;
+     if(response.recovery_code)showRecoveryCode(response.recovery_code,'Seu código pessoal — guarde agora');
      toast('Cadastro enviado. Confirmação necessária apenas no primeiro acesso.');
      await loadPublic();
    }catch(err){$('playerRegisterMessage').textContent=err.message;toast(err.message,true)}

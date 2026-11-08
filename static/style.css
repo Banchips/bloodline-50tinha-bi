@@ -357,3 +357,25 @@ a:focus-visible{outline:2px solid var(--lime);outline-offset:3px}
 .admin-pairing-actions{display:flex;gap:7px;flex-wrap:wrap}
 .admin-pairing-actions button{font-size:10px;padding:8px 9px;border-radius:8px}
 @media(max-width:490px){.admin-result-choice{width:28px;height:28px}.admin-pairing-actions button{flex:1}}
+
+/* v2.4.0 — códigos de recuperação com apresentação única. */
+.account-recovery-box{margin:18px 0;padding:15px 18px;background:rgba(101,130,164,.09);border:1px solid #425675;border-radius:14px}
+.account-recovery-box summary,.admin-recovery-fold summary,.recovery-audit-panel summary{cursor:pointer;font-weight:750}
+.account-recovery-box[open] summary{margin-bottom:13px}
+.recovery-generator{margin-top:20px;padding-top:17px;border-top:1px solid #42516b}
+.recovery-generator h3{font-size:1rem;margin:0 0 7px}
+.recovery-setup-note{border:1px solid #849b51}
+.manager-item-recovery{align-items:flex-start}
+.manager-identity{flex:1;min-width:0;overflow-wrap:anywhere}
+.admin-recovery-fold{margin-top:10px;padding:9px;border:1px solid #41536b;border-radius:10px;font-size:12px}
+.admin-recovery-fold[open]{background:#152539}
+.admin-recovery-form{margin:12px 0 10px}
+.admin-recovery-form button{font-size:12px}
+.recovery-audit-panel{margin:16px 0}
+.recovery-audit-panel summary small{display:block;font-weight:400;color:#aebcd0;margin-top:4px}
+.recovery-audit-row small{display:block;font-size:11px;word-break:break-word}
+.recovery-overlay{position:fixed;inset:0;z-index:10000;background:rgba(5,10,22,.82);display:grid;place-items:center;padding:16px}
+.recovery-overlay.hidden{display:none!important}
+.recovery-code-dialog{width:min(100%,550px);max-height:90vh;overflow-y:auto;box-shadow:0 20px 70px #0009}
+.recovery-code-value{display:block;padding:20px 12px;text-align:center;font-size:clamp(12px,2.5vw,17px);font-weight:800;letter-spacing:.05em;border-radius:10px;border:1px solid #83a75b;background:#0e1d2e;word-break:break-word;user-select:all;color:#d8fdb1}
+@media(max-width:640px){.manager-item-recovery{flex-wrap:wrap}.recovery-code-dialog .form-actions{display:grid;grid-template-columns:1fr}}
