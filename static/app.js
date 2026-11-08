@@ -832,8 +832,22 @@ function renderEventRounds(){
       <div class="round-actions">${finished?'<span class="round-status finished">Encerrada e despublicada</span>':published?
         `<a class="button-outline" href="#/rounds/${safe(ev.rounds_share_token)}" target="_blank" rel="noopener noreferrer">Abrir link privado</a><button class="button-outline" data-round-unpublish="${r.round_no}">Despublicar</button><button class="button-primary" data-round-finish="${r.round_no}" ${r.all_approved?'':'disabled title="Aguarde a aprovação de todas as mesas"'}>Finalizar rodada</button>`:
         `<button class="button-outline" data-round-publish="${r.round_no}">Publicar</button><button class="event-remove" data-round-delete="${r.round_no}">Excluir rascunho</button>`}</div></div>
-      <div class="pairing-grid">${r.tables.map(t=>`<article class="pairing-card"><h4>Mesa ${t.table_no}</h4><small class="${t.result_status==='approved'?'round-result-approved':'muted-note'}">${t.result_status==='approved'?'✓ Resultado aprovado':t.result_status==='pending'?'⏳ Aguardando aprovação':t.result_status==='rejected'?'✕ Resultado rejeitado':'○ Sem resultado aprovado'}</small>
-      ${t.players.map(p=>`<div class="pairing-person"><strong>${safe(p.player_name)}</strong><small>${safe(p.tribe_name)}${p.deck_name?' · '+safe(p.deck_name):''}</small></div>`).join('')}</article>`).join('')}</div>
+      <div class="pairing-grid">${r.tables.map(t=>{
+        const editable=published && !ev.ended_at && !finished && !['approved','pending'].includes(t.result_status);
+        const values=t.admin_results||{};
+        return `<article class="pairing-card admin-pairing-card"><h4>Mesa ${t.table_no}</h4><small class="${t.result_status==='approved'?'round-result-approved':'muted-note'}">${t.result_status==='approved'?'✓ Resultado aprovado':t.result_status==='pending'?'⏳ Aguardando aprovação':t.result_status==='rejected'?'✕ Resultado rejeitado':'○ Sem resultado aprovado'}</small>
+        <form class="admin-pairing-result" data-admin-pairing="${t.id}" data-event-round="${r.round_no}" data-admin-locked="${editable?'0':'1'}">
+        ${t.players.map(p=>`<div class="pairing-person admin-result-person" data-player="${p.player_id}">
+           <div class="admin-pairing-ident"><strong>${safe(p.player_name)}</strong><small>${safe(p.tribe_name)}${p.deck_name?' · '+safe(p.deck_name):''}</small></div>
+           <div class="admin-result-choices" role="group" aria-label="Resultado de ${safe(p.player_name)}">
+           <button type="button" class="admin-result-choice choice-win" data-result="V" title="Vitória" aria-label="Vitória de ${safe(p.player_name)}" aria-pressed="false" ${editable?'':'disabled'}>★</button>
+           <button type="button" class="admin-result-choice choice-loss" data-result="D" title="Derrota" aria-label="Derrota de ${safe(p.player_name)}" aria-pressed="false" ${editable?'':'disabled'}>✕</button>
+           <button type="button" class="admin-result-choice choice-draw" data-result="E" title="Empate" aria-label="Empate de ${safe(p.player_name)}" aria-pressed="false" ${editable?'':'disabled'}>≈</button>
+           </div></div>`).join('')}
+        ${editable?'<div class="admin-pairing-controls"><p class="admin-pairing-feedback" aria-live="polite">Selecione o resultado de cada jogador.</p><div class="admin-pairing-actions"><button class="button-primary admin-pairing-submit" type="submit" disabled>Registrar resultado</button><button class="button-outline admin-pairing-clear" type="button">Limpar</button></div></div>':
+          `<p class="admin-pairing-note">${t.result_status==='approved'?'Resultado contabilizado no ranking.':t.result_status==='pending'?'Envio pendente: revise-o em Mesas para aprovar.':finished?'Rodada finalizada.':published?'Mesa indisponível para lançamento.':'Publique a rodada para lançar resultados.'}</p>`}
+        </form></article>`;
+      }).join('')}</div>
       ${!finished&&!published&&r.tables.length>1?`<form class="round-swap" data-round-swap="${r.round_no}"><strong>Trocar jogadores entre mesas</strong><select aria-label="Jogador A" name="first" required><option value="">Primeiro jogador</option>${r.tables.flatMap(t=>t.players.map(p=>`<option value="${p.player_id}">${safe(p.player_name)} · Mesa ${t.table_no}</option>`)).join('')}</select><select name="second" aria-label="Jogador B" required><option value="">Segundo jogador</option>${r.tables.flatMap(t=>t.players.map(p=>`<option value="${p.player_id}">${safe(p.player_name)} · Mesa ${t.table_no}</option>`)).join('')}</select><button class="button-outline" type="submit">Trocar</button></form>`:''}
       </article>`}).join(''):'<p class="muted-note">Nenhuma rodada gerada neste evento.</p>'}</div>`;
   const endpoint=(n,extra='')=>`/api/admin/events/${ev.id}/rounds/${n}${extra}`;
@@ -846,6 +860,80 @@ function renderEventRounds(){
   box.querySelectorAll('[data-round-finish]').forEach(b=>b.addEventListener('click',()=>{const n=Number(b.dataset.roundFinish);if(confirm(`Finalizar definitivamente a rodada ${n}? Todas as mesas devem estar aprovadas. Os pareamentos sairão do link público e a próxima rodada será liberada.`))submit(endpoint(n,'/finish'),'POST',{},`Rodada ${n} finalizada. Próxima rodada liberada.`)}));
   box.querySelectorAll('[data-round-delete]').forEach(b=>b.addEventListener('click',()=>{const n=Number(b.dataset.roundDelete);if(confirm(`Excluir o rascunho ${n}?`))submit(endpoint(n),'DELETE',{},'Rascunho excluído.')}));
   box.querySelectorAll('[data-round-swap]').forEach(form=>form.addEventListener('submit',e=>{e.preventDefault();const n=Number(form.dataset.roundSwap);submit(endpoint(n,'/swap'),'POST',{player_a:Number(form.elements.first.value),player_b:Number(form.elements.second.value)},'Jogadores trocados.')}));
+  // Botões V/D/E compactos por jogador, usando a mesma validação da Área do Jogador.
+  box.querySelectorAll('.admin-pairing-result').forEach(form=>{
+    const locked=form.dataset.adminLocked==='1';
+    const round=rounds.find(r=>r.round_no===Number(form.dataset.eventRound));
+    const table=round?.tables.find(t=>t.id===Number(form.dataset.adminPairing));
+    if(!table)return;
+    const ids=table.players.map(p=>String(p.player_id));
+    const existing=table.admin_results||{};
+    let choices=Object.fromEntries(ids.map(id=>[id,existing[id]||'']));
+    let automatic=new Set();
+    function update(){
+      const valid=validatePlayerTableResults(ids.map(id=>choices[id]||''));
+      form.querySelectorAll('.admin-result-person').forEach(row=>{
+        const id=row.dataset.player,v=choices[id];
+        row.classList.toggle('is-win',v==='V');
+        row.classList.toggle('is-loss',v==='D'&&!automatic.has(id));
+        row.classList.toggle('is-auto-loss',v==='D'&&automatic.has(id));
+        row.classList.toggle('is-draw',v==='E');
+        row.querySelectorAll('.admin-result-choice').forEach(b=>{
+          const active=b.dataset.result===v;
+          b.classList.toggle('selected',active);
+          b.setAttribute('aria-pressed',active?'true':'false');
+        });
+      });
+      if(!locked){
+        const feedback=form.querySelector('.admin-pairing-feedback');
+        feedback.textContent=valid?'✓ Resultado completo. Confira com a mesa antes de registrar.':
+          ids.every(id=>!choices[id])?'Selecione o resultado de cada jogador. Uma vitória marca as demais derrotas.':
+          'Preencha todos os jogadores: 1 vitória ou empate entre 2 a 4 jogadores.';
+        feedback.classList.toggle('is-ready',valid);
+        form.querySelector('.admin-pairing-submit').disabled=!valid;
+      }
+    }
+    if(!locked){
+      form.querySelectorAll('.admin-result-choice').forEach(button=>button.addEventListener('click',()=>{
+        const id=button.closest('.admin-result-person').dataset.player;
+        const chosen=button.dataset.result,previous=choices[id];
+        if(previous==='V' && chosen!=='V'){
+          for(const other of automatic)if(choices[other]==='D')choices[other]='';
+          automatic.clear();
+        }
+        if(chosen==='V'){
+          choices=Object.fromEntries(ids.map(pid=>[pid,pid===id?'V':'D']));
+          automatic=new Set(ids.filter(pid=>pid!==id));
+        }else{
+          if(chosen==='E' && Object.values(choices).includes('V')){
+            for(const other of automatic)if(choices[other]==='D')choices[other]='';
+            for(const pid of ids)if(choices[pid]==='V')choices[pid]='';
+            automatic.clear();
+          }
+          choices[id]=previous===chosen?'':chosen;
+          automatic.delete(id);
+        }
+        update();
+      }));
+      form.querySelector('.admin-pairing-clear').addEventListener('click',()=>{
+        choices=Object.fromEntries(ids.map(id=>[id,'']));automatic.clear();update();
+      });
+      form.addEventListener('submit',async e=>{
+        e.preventDefault();
+        const entries=table.players.map(p=>({player_id:p.player_id,result:choices[String(p.player_id)]||''}));
+        if(!validatePlayerTableResults(entries.map(r=>r.result)))return;
+        const summary=table.players.map(p=>`${p.player_name}: ${choices[String(p.player_id)]==='V'?'Vitória':choices[String(p.player_id)]==='E'?'Empate':'Derrota'}`).join('\n');
+        if(!confirm(`Confirme o resultado com TODOS os jogadores da mesa antes de registrar.\n\n${summary}\n\nO lançamento administrativo será aprovado automaticamente e entrará no ranking. Confirmar?`))return;
+        const send=form.querySelector('.admin-pairing-submit');send.disabled=true;
+        try{
+          await api(`/api/admin/events/${ev.id}/rounds/${round.round_no}/pairings/${table.id}/result`,{method:'POST',body:{entries}});
+          await Promise.all([loadLeagueEvents(),loadPublic(false)]);
+          toast('Resultado registrado e aprovado. Ranking atualizado.');
+        }catch(err){toast(err.message,true);update();}
+      });
+    }
+    update();
+  });
   syncSearchableSelects();
 }
 // Inscrições públicas: o site só exibe eventos abertos e nunca libera status administrativos.

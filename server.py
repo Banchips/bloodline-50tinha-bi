@@ -1159,7 +1159,7 @@ def list_league_events(db):
         ev['warnings']=[dict(w) for w in db.execute('''SELECT w.id,w.player_id,p.name AS player_name,w.note,w.created_at, a.username AS admin_name
                    FROM event_player_warnings w JOIN players p ON p.id=w.player_id
                    LEFT JOIN admins a ON a.id=w.admin_id WHERE w.event_id=? ORDER BY w.id DESC''',(ev['id'],))]
-        ev['rounds'] = event_round_list(db, ev['id'])
+        ev['rounds'] = event_round_list(db, ev['id'], include_admin_results=True)
         ev['registrations'] = grouped[ev['id']]
         ev['total_registered'] = len(ev['registrations'])
         ev['total_checkin'] = sum(row['checkin'] for row in ev['registrations'])
@@ -1171,7 +1171,7 @@ def list_league_events(db):
 
 
 
-def event_round_list(db, event_id, published_only=False):
+def event_round_list(db, event_id, published_only=False, include_admin_results=False):
     # Stable snapshots; public output excludes payment/check-in.
     where = ' AND r.status=\'published\'' if published_only else ''
     rows = [dict(row) for row in db.execute('''SELECT r.id,r.event_id,r.round_no,CASE WHEN r.finalized_at IS NOT NULL THEN 'finished' ELSE r.status END AS status,
@@ -1191,10 +1191,18 @@ def event_round_list(db, event_id, published_only=False):
                     WHERE pp.pairing_id=? ORDER BY pp.id''',(table['id'],))]
         for table in tables:
             submissions=db.execute('''SELECT g.id,g.status FROM game_tables g WHERE g.pairing_id=? ORDER BY g.id DESC''',(table['id'],)).fetchall()
-            table['result_status']=submissions[0]['status'] if submissions else 'not_sent'
+            table['result_status']=(next((r['status'] for r in submissions if r['status']=='approved'), None) or next((r['status'] for r in submissions if r['status']=='pending'), None) or (submissions[0]['status'] if submissions else 'not_sent'))
             table['result_count']=len(submissions)
             table['approved_count']=sum(r['status']=='approved' and db.execute('SELECT COUNT(*) AS n FROM matches WHERE table_id=?',(r['id'],)).fetchone()['n']==len(table['players']) for r in submissions)
             table['pending_count']=sum(r['status']=='pending' for r in submissions)
+            if include_admin_results:
+                # Resultado administrativo do envio oficial, nunca divulgado pelo link publico.
+                active = next((r for r in submissions if r['status']=='approved'), None)
+                if active is None:
+                    active = next((r for r in submissions if r['status']=='pending'), None)
+                table['admin_results'] = ({str(row['player_id']): row['result']
+                    for row in db.execute('SELECT player_id,result FROM game_table_entries WHERE table_id=?',
+                                          (active['id'],))} if active else {})
         rnd['all_approved']=bool(tables) and all(t['approved_count']==1 and t['pending_count']==0 for t in tables)
         rnd['tables'] = tables
     return rows
@@ -1558,6 +1566,57 @@ def generate_event_round(db, event_id, round_no, regenerate=False, mode='auto'):
     db.execute('UPDATE league_events SET registrations_open=0,updated_at=CURRENT_TIMESTAMP WHERE id=?',
                (event_id,))
     return rnd_id
+
+
+def submit_admin_pairing_result(db, event_id, round_no, pairing_id, raw_entries):
+    """Lançamento oficial de uma mesa pareada. O resultado é aprovado na mesma transação.
+
+    Não aceita alteração de mesas aprovadas ou com envios pendentes: nesses casos,
+    deve-se usar a revisão administrativa existente, para não duplicar pontuação.
+    """
+    pairing = db.execute("""SELECT ep.id,ep.table_no,r.id AS round_id,r.status,r.finalized_at,
+                      ev.season_id,ev.event_date,ev.episode,ev.ended_at
+        FROM event_pairings ep JOIN event_rounds r ON r.id=ep.round_id
+        JOIN league_events ev ON ev.id=r.event_id
+        WHERE ep.id=? AND r.event_id=? AND r.round_no=?""",
+        (pairing_id,event_id,round_no)).fetchone()
+    if not pairing:
+        raise UserInputError('Mesa não encontrada neste evento e rodada.')
+    if pairing['ended_at'] or pairing['finalized_at'] is not None or pairing['status']!='published':
+        raise UserInputError('O administrador só pode lançar resultados em rodadas publicadas e não finalizadas.')
+    if db.execute("""SELECT id FROM game_tables WHERE pairing_id=? AND status='approved'
+                LIMIT 1""", (pairing_id,)).fetchone():
+        raise UserInputError('Esta mesa já foi aprovada e pontuada. Não é possível lançar novamente.')
+    if db.execute("""SELECT id FROM game_tables WHERE pairing_id=? AND status='pending'
+                LIMIT 1""", (pairing_id,)).fetchone():
+        raise UserInputError('Há um resultado pendente nesta mesa. Revise-o em Mesas para aprovar antes de lançar outro.')
+    members=db.execute("""SELECT player_id,tribe_id,deck_id FROM event_pairing_players
+        WHERE pairing_id=? ORDER BY id""", (pairing_id,)).fetchall()
+    if not isinstance(raw_entries,list) or len(raw_entries)!=len(members):
+        raise UserInputError('Selecione o resultado de cada jogador da mesa.')
+    choices={}
+    for entry in raw_entries:
+        if not isinstance(entry,dict):
+            raise UserInputError('Resultado de jogador inválido.')
+        pid=int_id(entry.get('player_id'),'Jogador')
+        if pid in choices:
+            raise UserInputError('Jogador repetido na mesa.')
+        choices[pid]=get_result(entry.get('result'))
+    if set(choices)!={m['player_id'] for m in members}:
+        raise UserInputError('Os participantes devem corresponder ao pareamento oficial.')
+    header,entries=validate_table(db,{
+        'season_id':pairing['season_id'],'event_date':pairing['event_date'],
+        'episode':pairing['episode'],'round_no':round_no,
+        'table_no':pairing['table_no'],
+        'entries':[{'player_id':m['player_id'],'tribe_id':m['tribe_id'],
+                    'deck_id':m['deck_id'],'result':choices[m['player_id']]}
+                   for m in members]})
+    # Não passar approved=True aqui: o vínculo oficial deve ser gravado ANTES
+    # da revisão e da inclusão das partidas no ranking.
+    table_id=create_table(db,header,entries,False)
+    db.execute('UPDATE game_tables SET pairing_id=? WHERE id=?',(pairing_id,table_id))
+    review_table(db,table_id,True,'Lançado e aprovado pela administração do evento.')
+    return table_id
 
 
 def finalize_event_round(db,event_id,round_no):
@@ -2305,6 +2364,12 @@ class Handler(BaseHTTPRequestHandler):
                     db.execute('DELETE FROM event_rounds WHERE id=?',(rnd['id'],))
                     db.commit()
                     return self.respond(200,{'ok':True})
+                admin_result_route=re.fullmatch(r'/api/admin/events/(\d+)/rounds/(\d+)/pairings/(\d+)/result',path)
+                if admin_result_route and method=='POST':
+                    event_id,round_no,pairing_id=map(int,admin_result_route.groups())
+                    table_id=submit_admin_pairing_result(db,event_id,round_no,pairing_id,obj.get('entries'))
+                    db.commit()
+                    return self.respond(201,{'ok':True,'id':table_id,'status':'approved'})
                 swap_route=re.fullmatch(r'/api/admin/events/(\d+)/rounds/(\d+)/swap',path)
                 if swap_route and method=='POST':
                     event_id,round_no=map(int,swap_route.groups())
