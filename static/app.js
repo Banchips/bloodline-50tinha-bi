@@ -324,6 +324,7 @@ async function refreshAdminSession(){
    $('logoutBtn').classList.toggle('hidden',!d.admin);
    $('ownerAdminSection').classList.toggle('hidden',!state.canManageAdmins);
    $('restoreDbSection').classList.toggle('hidden',!state.canManageAdmins);
+   $('downloadDbExport').classList.toggle('hidden',!state.canManageAdmins);
    if(d.admin)refreshPlayerAccessRequests();
    $('adminIdentity').textContent=d.admin?`Conectado como ${d.username} · ${state.canManageAdmins?'Conta principal':'Administrador'}`:'';
    $('adminConfigMessage').textContent=d.admin_configured?'':'Conta principal não configurada. Execute o sistema pelo terminal para criar o primeiro usuário.';
