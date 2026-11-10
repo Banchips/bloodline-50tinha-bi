@@ -498,11 +498,15 @@ function renderTableHistory(){
 function renderTableReview(){
   const tables=state.admin?.game_tables||[];
   const pending=tables.filter(t=>t.status==='pending');
+  const history=tables.filter(t=>t.status!=='pending');
   $('pendingCount').textContent=pending.length||'';
   $('pendingCount').classList.toggle('hidden',!pending.length);
-  const sorted=[...pending,...tables.filter(t=>t.status!=='pending')].slice(0,150);
-  $('tableReviewList').innerHTML=sorted.length?sorted.map(t=>`<article class="review-item"><div><strong>#${t.id} · ${safe(t.season_name)} · ${safe(t.episode)} · R${t.round_no} / Mesa ${t.table_no}</strong><div class="muted-note">${fmtDate(t.event_date)} · Enviado por ${safe(t.submitter_name||'Admin')} · <span class="review-${t.status}">${t.status==='pending'?'PENDENTE':t.status==='approved'?'APROVADA':'REJEITADA'}</span></div><div class="review-entries">${t.entries.map(e=>`<span>${safe(e.player_name)} (${safe(e.tribe_name)}) · <strong>${e.result}</strong>${e.deck_name?' · '+safe(e.deck_name):''}</span>`).join('')}</div>${t.admin_note?`<small>Observação: ${safe(t.admin_note)}</small>`:''}</div><div class="mini-buttons">${t.status==='pending'?`<button data-review="${t.id}" data-status="approved">Aprovar</button><button class="danger" data-review="${t.id}" data-status="rejected">Rejeitar</button>`:`<button class="danger" data-remove-table="${t.id}">Excluir mesa</button>`}</div></article>`).join(''):'<p class="muted-note">Nenhuma mesa enviada ainda.</p>';
-  $('tableReviewList').querySelectorAll('button[data-review]').forEach(b=>b.addEventListener('click',async()=>{
+  $('reviewPendingTotal').textContent=pending.length;
+  $('reviewHistoryCount').textContent=history.length;
+  const renderCard=t=>`<article class="review-item"><div><strong>#${t.id} · ${safe(t.season_name)} · ${safe(t.episode)} · R${t.round_no} / Mesa ${t.table_no}</strong><div class="muted-note">${fmtDate(t.event_date)} · Enviado por ${safe(t.submitter_name||'Admin')} · <span class="review-${t.status}">${t.status==='pending'?'PENDENTE':t.status==='approved'?'APROVADA':'REJEITADA'}</span></div><div class="review-entries">${t.entries.map(e=>`<span>${safe(e.player_name)} (${safe(e.tribe_name)}) · <strong>${e.result}</strong>${e.deck_name?' · '+safe(e.deck_name):''}</span>`).join('')}</div>${t.admin_note?`<small>Observação: ${safe(t.admin_note)}</small>`:''}</div><div class="mini-buttons">${t.status==='pending'?`<button data-review="${t.id}" data-status="approved">Aprovar</button><button class="danger" data-review="${t.id}" data-status="rejected">Rejeitar</button>`:`<button class="danger" data-remove-table="${t.id}">Excluir mesa</button>`}</div></article>`;
+  $('tableReviewPending').innerHTML=pending.length?pending.map(renderCard).join(''):'<p class="review-empty-state">Nenhuma mesa aguardando aprovação.</p>';
+  $('tableReviewHistory').innerHTML=history.length?history.slice(0,150).map(renderCard).join(''):'<p class="review-empty-state">Nenhuma mesa aprovada ou rejeitada até agora.</p>';
+  $('pane-review').querySelectorAll('button[data-review]').forEach(b=>b.addEventListener('click',async()=>{
     const approved=b.dataset.status==='approved';if(!confirm(approved?'Aprovar a mesa e somar os pontos?':'Rejeitar esta mesa?'))return;
     const note=approved?'':(prompt('Motivo da rejeição (opcional):','')||'');
     try{await api('/api/tables/'+b.dataset.review,{method:'PUT',body:{status:b.dataset.status,note}});
@@ -512,7 +516,7 @@ function renderTableReview(){
       toast(approved?'Mesa aprovada e pontos confirmados no ranking da temporada.':'Mesa rejeitada.');
     }catch(err){toast(err.message,true)}
   }));
-  $('tableReviewList').querySelectorAll('button[data-remove-table]').forEach(b=>b.addEventListener('click',async()=>{
+  $('pane-review').querySelectorAll('button[data-remove-table]').forEach(b=>b.addEventListener('click',async()=>{
     if(!confirm('Excluir esta mesa e os resultados vinculados? Essa ação não pode ser desfeita.'))return;
     try{await api('/api/tables/'+b.dataset.removeTable,{method:'DELETE',body:{}});toast('Mesa excluída.');await reloadAll();await loadTables()}catch(err){toast(err.message,true)}
   }));

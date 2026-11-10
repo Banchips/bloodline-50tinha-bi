@@ -144,7 +144,16 @@
       <div id="loginBox" class="login-area panel"><h2>Acesso do administrador</h2><p>O painel público é livre. Para alterar dados, entre com sua conta administrativa individual.</p><form id="loginForm" class="inline-form"><input id="adminUsername" name="username" type="text" placeholder="Usuário" autocomplete="username" required maxlength="32"><input id="adminPassword" name="password" type="password" placeholder="Senha" autocomplete="current-password" required><button type="submit" class="button-primary">Entrar</button></form><p class="muted-note" id="adminConfigMessage"></p></div>
       <div id="adminContent" class="hidden"><div class="account-chip" id="adminIdentity"></div>
         <div class="admin-tabs" role="tablist"><a class="admin-tab active" data-admin-tab="events" href="#/admin/events">Eventos e inscrições</a><a class="admin-tab" data-admin-tab="review" href="#/admin/review">Mesas para aprovar <span id="pendingCount" class="count-dot"></span></a><!-- Resultados: temporariamente ocultos; reabertura ocorrerá dentro de Eventos. --><a class="admin-tab" data-admin-tab="roster" href="#/admin/roster">Jogadores e temporadas</a><a class="admin-tab" data-admin-tab="eligibility" href="#/admin/eligibility">Tribos sem pontuação</a><a class="admin-tab" data-admin-tab="import" href="#/admin/import">Importar / exportar</a><a class="admin-tab" data-admin-tab="accounts" href="#/admin/accounts">Acessos</a></div>
-        <div class="admin-pane hidden" id="pane-review"><section class="panel padded"><span class="kicker">MODERAÇÃO</span><h2>Mesas enviadas pelos jogadores</h2><p>Confira a composição, os decks, a vitória ou os empates. Somente mesas aprovadas entram na classificação.</p><div id="tableReviewList" class="review-list"></div></section></div>
+        <div class="admin-pane hidden" id="pane-review"><section class="panel padded"><span class="kicker">MODERAÇÃO</span><h2>Mesas para aprovar</h2><p>Confira a composição, os decks e os resultados enviados. Somente mesas aprovadas entram na classificação.</p>
+          <section class="review-pending-section" aria-labelledby="reviewPendingTitle">
+            <div class="review-pending-header"><h3 id="reviewPendingTitle">Aguardando aprovação <span id="reviewPendingTotal" class="review-count">0</span></h3><p class="muted-note">Mesas pendentes permanecem visíveis para análise.</p></div>
+            <div id="tableReviewPending" class="review-list"></div>
+          </section>
+          <details id="reviewHistoryFold" class="review-history-fold">
+            <summary><span class="review-history-text"><strong>Histórico de mesas</strong><small>Mesas aprovadas e rejeitadas</small></span><span id="reviewHistoryCount" class="review-count">0</span><span class="review-history-chevron" aria-hidden="true">⌄</span></summary>
+            <div id="tableReviewHistory" class="review-list"></div>
+          </details>
+        </section></div>
         <div class="admin-pane" id="pane-events">
           <div id="eventAgendaView">
           <div class="admin-layout event-layout">

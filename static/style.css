@@ -389,3 +389,22 @@ a:focus-visible{outline:2px solid var(--lime);outline-offset:3px}
 .player-password-fold .player-security-action .stack-form{max-width:520px;margin-top:0;border-top:0;padding-top:0}
 .player-security-action .stack-form input{width:100%}
 .player-password-fold #playerPasswordForm{max-width:520px;margin-top:0;border-top:0;padding-top:0}
+
+/* v2.4.2 — Pendências visíveis, histórico de mesas retrátil */
+.review-pending-section{margin-top:24px}
+.review-pending-header h3{display:flex;align-items:center;gap:10px;margin:0 0 7px;font-size:16px;font-weight:850}
+.review-pending-header p{margin:0;color:var(--muted)}
+.review-count{display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:24px;padding:0 8px;border:1px solid #44566d;background:#253247;border-radius:999px;color:#dbe6f7;font-size:12px;font-weight:850;white-space:nowrap}
+.review-pending-section .review-count{background:#354124;border-color:#667d36;color:#ddf69b}
+.review-empty-state{color:var(--muted);font-size:12px;padding:15px 17px;border:1px dashed #34415a;background:#151e2e;border-radius:11px;margin:14px 0 0}
+.review-history-fold{border:1px solid #36445d;background:#141d2d;border-radius:13px;margin-top:28px;padding:0 18px 18px}
+.review-history-fold>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:12px;padding:19px 0;user-select:none}
+.review-history-fold>summary::-webkit-details-marker{display:none}
+.review-history-text{display:grid;gap:5px;flex:1;min-width:0}
+.review-history-text strong{font-size:15px;color:var(--text)}
+.review-history-text small{font-size:11px;color:var(--muted)}
+.review-history-chevron{color:#a9b7cc;font-size:22px;line-height:1;transition:transform .15s ease}
+.review-history-fold[open] .review-history-chevron{transform:rotate(180deg)}
+.review-history-fold>summary:focus-visible{outline:2px solid var(--violet);outline-offset:4px;border-radius:7px}
+.review-history-fold .review-list{margin-top:3px}
+@media(max-width:700px){.review-history-fold{padding:0 12px 12px}.review-history-fold>summary{gap:8px}.review-item{gap:12px}}
