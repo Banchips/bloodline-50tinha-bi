@@ -1967,8 +1967,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self.respond(200,{'accounts':list_player_access_requests(db)})
             if path == '/api/player/session':
                 player=self.current_player()
+                with conn_db() as db:
+                    account=db.execute('SELECT username FROM player_accounts WHERE player_id=?',
+                                       (player['id'],)).fetchone() if player else None
                 return self.respond(200, {'player':bool(player), 'id':player['id'] if player else None,
                                           'name':player['name'] if player else None,
+                                          'username':account['username'] if account else None,
                     'has_recovery_code':bool(player and self.player_has_recovery_code(player['id']))})
             if path == '/api/player/my-rounds':
                 player=self.current_player()
@@ -2167,10 +2171,13 @@ class Handler(BaseHTTPRequestHandler):
                 with DB_LOCK,conn_db() as db:
                     if obj.get('username') not in (None,''):
                         username=txt(obj.get('username'), 'Usuário', 100)
-                        # Compatibilidade: o nome do jogador também serve para contas antigas.
+                        # Contas antigas migradas com login 'jogadorN' podem usar o
+                        # nome no ranking até escolherem seu próprio login.
+                        # Após a troca, o nome antigo deixa de ser um alias de acesso.
                         account=db.execute('''SELECT pa.* FROM player_accounts pa
                            JOIN players p ON p.id=pa.player_id
-                           WHERE pa.username=? COLLATE NOCASE OR p.name=? COLLATE NOCASE
+                           WHERE pa.username=? COLLATE NOCASE
+                             OR (p.name=? COLLATE NOCASE AND pa.username=('jogador' || pa.player_id))
                            ORDER BY CASE WHEN pa.username=? COLLATE NOCASE THEN 0 ELSE 1 END LIMIT 1''',
                            (username,username,username)).fetchone()
                     elif obj.get('player_id') not in (None,''):
@@ -2203,6 +2210,44 @@ class Handler(BaseHTTPRequestHandler):
                 cookie='bl_player=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'
                 if COOKIE_SECURE:cookie+='; Secure'
                 return self.respond(200,{'ok':True},extra={'Set-Cookie':cookie})
+            if path == '/api/player/username' and method == 'POST':
+                obj=self.read_json()
+                player=self.current_player()
+                if player is None:return self.respond(401,{'error':'Entre na área do jogador.'})
+                username=validate_username(obj.get('new_username'))
+                with DB_LOCK,conn_db() as db:
+                    account=db.execute('SELECT * FROM player_accounts WHERE player_id=?',(player['id'],)).fetchone()
+                    if not password_matches(obj.get('current_password',''),account):
+                        return self.respond(403,{'error':'Senha atual incorreta.'})
+                    if db.execute('SELECT 1 FROM player_accounts WHERE username=? COLLATE NOCASE AND player_id<>?',
+                                  (username,player['id'])).fetchone():
+                        raise UserInputError('Esse nome de usuário já está sendo utilizado.')
+                    if account['username']==username:
+                        raise UserInputError('Informe um nome de usuário diferente do atual.')
+                    db.execute('UPDATE player_accounts SET username=? WHERE player_id=?',(username,player['id']))
+                    # A conta autenticada continua válida; outros dispositivos precisam entrar novamente.
+                    own=hashlib.sha256(self._cookie('bl_player').encode('ascii')).hexdigest()
+                    db.execute('DELETE FROM player_sessions WHERE player_id=? AND token_hash<>?',(player['id'],own))
+                return self.respond(200,{'ok':True,'username':username})
+            if path == '/api/player/display-name' and method == 'POST':
+                obj=self.read_json()
+                player=self.current_player()
+                if player is None:return self.respond(401,{'error':'Entre na área do jogador.'})
+                name=txt(obj.get('new_name'),'Nome de jogador',100)
+                if any(ord(c)<32 or ord(c)==127 for c in name):
+                    raise UserInputError('O nome de jogador não pode conter caracteres de controle.')
+                with DB_LOCK,conn_db() as db:
+                    account=db.execute('SELECT * FROM player_accounts WHERE player_id=?',(player['id'],)).fetchone()
+                    if not password_matches(obj.get('current_password',''),account):
+                        return self.respond(403,{'error':'Senha atual incorreta.'})
+                    if db.execute('SELECT 1 FROM players WHERE name=? COLLATE NOCASE AND id<>?',
+                                  (name,player['id'])).fetchone():
+                        raise UserInputError('Esse nome de jogador já está em uso na liga.')
+                    if player['name']==name:
+                        raise UserInputError('Informe um nome de jogador diferente do atual.')
+                    # O ID não muda: temporadas, decks, inscrições e resultados seguem vinculados.
+                    db.execute('UPDATE players SET name=? WHERE id=?',(name,player['id']))
+                return self.respond(200,{'ok':True,'name':name})
             if path == '/api/player/password' and method == 'POST':
                 obj=self.read_json()
                 player=self.current_player()

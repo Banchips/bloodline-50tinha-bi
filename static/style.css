@@ -379,3 +379,13 @@ a:focus-visible{outline:2px solid var(--lime);outline-offset:3px}
 .recovery-code-dialog{width:min(100%,550px);max-height:90vh;overflow-y:auto;box-shadow:0 20px 70px #0009}
 .recovery-code-value{display:block;padding:20px 12px;text-align:center;font-size:clamp(12px,2.5vw,17px);font-weight:800;letter-spacing:.05em;border-radius:10px;border:1px solid #83a75b;background:#0e1d2e;word-break:break-word;user-select:all;color:#d8fdb1}
 @media(max-width:640px){.manager-item-recovery{flex-wrap:wrap}.recovery-code-dialog .form-actions{display:grid;grid-template-columns:1fr}}
+
+/* Área do Jogador v2.4.1 — ações de segurança em seções coerentes */
+.player-security-actions{display:grid;gap:22px;margin-top:23px}
+.player-security-action{min-width:0;padding:0 0 21px;border-bottom:1px solid #35445d}
+.player-security-action:last-child{padding-bottom:0;border-bottom:0}
+.player-security-action h3{font-size:15px;color:#ebf4ff;margin:0 0 8px}
+.player-security-action .muted-note{margin:0 0 14px}
+.player-password-fold .player-security-action .stack-form{max-width:520px;margin-top:0;border-top:0;padding-top:0}
+.player-security-action .stack-form input{width:100%}
+.player-password-fold #playerPasswordForm{max-width:520px;margin-top:0;border-top:0;padding-top:0}

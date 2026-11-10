@@ -112,8 +112,18 @@
           <div id="playerStatsContent" aria-live="polite"><p class="muted-note">Carregando seus resultados...</p></div>
         </section>
         <section id="recoverySetupHint" class="panel padded hidden recovery-setup-note"><strong>Proteja seu acesso</strong><p>Você ainda não possui um código pessoal de recuperação. Gere um abaixo com sua senha atual e guarde-o em local privado.</p></section>
-        <details class="panel padded player-password-fold player-dashboard-block"><summary><span><span class="kicker">03 · SEGURANÇA</span><strong>Alterar minha senha</strong><small>Abra para atualizar sua senha de acesso</small></span><span class="fold-arrow" aria-hidden="true">⌄</span></summary>
-          <form id="playerPasswordForm" class="stack-form"><label>Senha atual<input id="playerOldPassword" type="password" autocomplete="current-password" required></label><label>Nova senha (mínimo 10 caracteres)<input id="playerNewPassword" type="password" autocomplete="new-password" minlength="10" required></label><button class="button-outline" type="submit">Trocar senha</button></form>
+        <details class="panel padded player-password-fold player-dashboard-block"><summary><span><span class="kicker">03 · SEGURANÇA</span><strong>Ações de Segurança</strong><small>Abra para alterar suas informações de acesso</small></span><span class="fold-arrow" aria-hidden="true">⌄</span></summary>
+          <div class="player-security-actions">
+            <section class="player-security-action"><h3>1 · Alterar nome de usuário (login)</h3><p class="muted-note">Este é o usuário usado para entrar na sua conta. Sua classificação não será alterada.</p>
+              <form id="playerUsernameForm" class="stack-form"><label>Novo nome de usuário<input id="playerNewUsername" minlength="3" maxlength="32" pattern="[A-Za-z][A-Za-z0-9._-]{2,31}" autocomplete="off" required></label><label>Confirme sua senha atual<input id="playerUsernamePassword" type="password" autocomplete="current-password" required></label><button class="button-outline" type="submit">Salvar novo login</button></form>
+            </section>
+            <section class="player-security-action"><h3>2 · Alterar nome de jogador</h3><p class="muted-note">Nome exibido no ranking, nas mesas, nos decks e no histórico. Seus pontos não serão perdidos.</p>
+              <form id="playerDisplayNameForm" class="stack-form"><label>Novo nome no ranking<input id="playerNewDisplayName" maxlength="100" autocomplete="off" required></label><label>Confirme sua senha atual<input id="playerNamePassword" type="password" autocomplete="current-password" required></label><button class="button-outline" type="submit">Salvar nome de jogador</button></form>
+            </section>
+            <section class="player-security-action"><h3>3 · Alterar senha</h3>
+              <form id="playerPasswordForm" class="stack-form"><label>Senha atual<input id="playerOldPassword" type="password" autocomplete="current-password" required></label><label>Nova senha (mínimo 10 caracteres)<input id="playerNewPassword" type="password" autocomplete="new-password" minlength="10" required></label><button class="button-outline" type="submit">Trocar senha</button></form>
+            </section>
+          </div>
           <div class="recovery-generator"><h3>Código pessoal de recuperação</h3><p class="muted-note">Permite recuperar sua conta sem e-mail ou telefone. Ao gerar um novo, o anterior é invalidado. O código aparece somente uma vez.</p>
             <form id="playerRecoveryGenerateForm" class="stack-form"><label>Confirme sua senha atual<input id="playerRecoveryConfirmPassword" type="password" autocomplete="current-password" required></label>
               <button type="submit" class="button-outline">Gerar / renovar meu código pessoal</button></form>

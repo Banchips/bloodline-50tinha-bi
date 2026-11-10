@@ -1053,6 +1053,8 @@ async function refreshPlayerSession(){
     if(state.currentPanel==='signup')renderSignupForm();
     if(current.player){
       $('playerIdentity').textContent=current.name;
+      $('playerNewUsername').value=current.username||'';
+      $('playerNewDisplayName').value=current.name||'';
       $('recoverySetupHint').classList.toggle('hidden',Boolean(current.has_recovery_code));
       await Promise.all([refreshPlayerRounds(),refreshPlayerResults()]);
     }else{
@@ -1310,6 +1312,23 @@ function bindEvents(){
  });
  $('playerStatsSeason').addEventListener('change',()=>{state.playerStatsSeason=$('playerStatsSeason').value;refreshPlayerResults();});
  $('playerLogoutBtn').addEventListener('click',async()=>{try{await api('/api/player/logout',{method:'POST',body:{}});state.playerSession=null;await refreshPlayerSession();toast('Você saiu da sua conta.')}catch(err){toast(err.message,true)}});
+ $('playerUsernameForm').addEventListener('submit',async e=>{
+   e.preventDefault();const form=e.currentTarget,button=form.querySelector('button[type="submit"]');button.disabled=true;
+   try{
+     await api('/api/player/username',{method:'POST',body:{new_username:$('playerNewUsername').value.trim(),current_password:$('playerUsernamePassword').value}});
+     $('playerUsernamePassword').value='';toast('Nome de usuário atualizado. Use o novo login na próxima vez.');
+     await refreshPlayerSession();
+   }catch(err){toast(err.message,true)}finally{button.disabled=false}
+ });
+ $('playerDisplayNameForm').addEventListener('submit',async e=>{
+   e.preventDefault();const form=e.currentTarget,button=form.querySelector('button[type="submit"]');button.disabled=true;
+   try{
+     await api('/api/player/display-name',{method:'POST',body:{new_name:$('playerNewDisplayName').value.trim(),current_password:$('playerNamePassword').value}});
+     $('playerNamePassword').value='';toast('Nome de jogador atualizado em seus dados da Bloodline.');
+     await loadPublic();await refreshPlayerSession();
+     if(state.loggedIn){await loadAdmin();}
+   }catch(err){toast(err.message,true)}finally{button.disabled=false}
+ });
  $('playerPasswordForm').addEventListener('submit',async e=>{e.preventDefault();try{
    await api('/api/player/password',{method:'POST',body:{current_password:$('playerOldPassword').value,new_password:$('playerNewPassword').value}});
    $('playerPasswordForm').reset();toast('Senha atualizada.');
