@@ -13,7 +13,6 @@ function isoFromBrazilianDate(value){
  return `${yyyy}-${mm}-${dd}`;
 }
 const resultLabels = {V:'Vitória · 3 pts',E:'Empate · 1 pt',D:'Derrota · 0 pts'};
-const colors = ['#c6ef50','#9e8eff','#69d7e3','#f2b47c','#f18ba8'];
 const state = {public:null, admin:null, season:'all', adminMode:false, loggedIn:false, editing:null, editingDeck:null, tables:[], canManageAdmins:false, admins:[], events:[], selectedEventId:null, editingEventId:null, openEvents:[],selectedSignupEventId:null,publishedRounds:[],selectedRoundEventId:null, inviteReturnTab:'events', currentPanel:null,sessionChecked:false,sessionLoading:false,playerSession:null,playerRounds:[],roundShareToken:null,playerAccounts:[]};
 let toastTimer;
 function toast(msg,error=false){const t=$('toast');t.textContent=msg;t.classList.toggle('error',error);t.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('visible'),4500)}
@@ -175,7 +174,7 @@ function renderTribes(){
   const excludedNames=state.public?.excluded_tribes||[];
   $('tribeBars').innerHTML=top.length?top.map(t=>{
     const blocked=excludedNames.includes(t.name) && state.season!=='all';
-    return `<div class="tribe-bar-item"><div class="tribe-bar-top"><span>${safe(t.name)} ${blocked?'<span class="zero-note">· Não pontua</span>':''}</span><span class="${blocked?'excluded':''}">${t.points} pts</span></div><div class="bar-track"><div style="width:${(t.points/max*100).toFixed(1)}%"></div></div><div class="bar-sub">${t.matches} partida(s) · ${t.players} jogador(es)</div></div>`
+    return `<div class="tribe-bar-item"><div class="tribe-bar-top"><span>${safe(t.name)} ${blocked?'<span class="zero-note">· Não pontua</span>':''}</span><span class="${blocked?'excluded':''}">${t.points} pts</span></div><progress class="tribe-progress" value="${Math.max(0,Number(t.points)||0)}" max="${max}" aria-label="Progresso de pontos de ${safe(t.name)}"></progress><div class="bar-sub">${t.matches} partida(s) · ${t.players} jogador(es)</div></div>`
   }).join(''):'<div class="empty">As tribos aparecem após o primeiro resultado.</div>';
 }
 // O histórico público abre compacto, exibindo todas as partidas do último dia.
@@ -226,9 +225,11 @@ function renderTrend(){
   const max=Math.max(3,...visible.map(p=>p.sum));const x=i=>left+(events.length===1?(width-left-right)/2:i*(width-left-right)/(events.length-1));const y=v=>top+(height-top-bottom)*(1-v/max);
   const grid=[0,.25,.5,.75,1].map(k=>`<line x1="${left}" y1="${y(k*max)}" x2="${width-right}" y2="${y(k*max)}" stroke="#2c3850"/><text x="${left-10}" y="${y(k*max)+4}" text-anchor="end" fill="#8794aa" font-size="11">${Math.round(k*max)}</text>`).join('');
   const labels=events.map((ev,i)=>(events.length>8 && i%Math.ceil(events.length/8)!==0 && i!==events.length-1)?'':`<text x="${x(i)}" y="${height-14}" text-anchor="middle" fill="#8794aa" font-size="10">${safe(fmtDate(ev.date).slice(0,5))}</text>`).join('');
-  const lines=visible.map((p,j)=>`<polyline points="${p.values.map((v,i)=>`${x(i)},${y(v)}`).join(' ')}" fill="none" stroke="${colors[j]}" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>${p.values.map((v,i)=>`<circle cx="${x(i)}" cy="${y(v)}" r="3.5" fill="${colors[j]}"/>`).join('')}`).join('');
+  // A cor da linha, dos pontos e da legenda vem da mesma classe CSS externa.
+  // Não usar style="...": a CSP do servidor proíbe estilos inline.
+  const lines=visible.map((p,j)=>`<polyline class="trend-line trend-series-${j}" points="${p.values.map((v,i)=>`${x(i)},${y(v)}`).join(' ')}" fill="none" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>${p.values.map((v,i)=>`<circle class="trend-point trend-series-${j}" cx="${x(i)}" cy="${y(v)}" r="3.5"/>`).join('')}`).join('');
   $('trendChart').innerHTML=`<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Evolução acumulada de pontos das cinco melhores combinações jogador e tribo">${grid}${labels}${lines}</svg>`;
-  $('trendLegend').innerHTML=visible.map((p,i)=>`<span class="trend-legend-item"><i class="legend-dot" style="background:${colors[i]}" aria-hidden="true"></i><span>${safe(p.name)} · ${safe(p.tribe)} · <strong>${intFmt(p.sum)} pts</strong></span></span>`).join('');
+  $('trendLegend').innerHTML=visible.map((p,i)=>`<span class="trend-legend-item"><i class="legend-dot trend-series-${i}" aria-hidden="true"></i><span>${safe(p.name)} · ${safe(p.tribe)} · <strong>${intFmt(p.sum)} pts</strong></span></span>`).join('');
 }
 // Navegação por fragmentos: cada tela tem link próprio, suporta botão direito,
 // nova aba, histórico Voltar/Avançar e F5 sem depender de rotas adicionais no servidor.

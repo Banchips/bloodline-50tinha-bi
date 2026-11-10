@@ -438,3 +438,21 @@ a:focus-visible{outline:2px solid var(--lime);outline-offset:3px}
 .matches-expand[aria-expanded="true"] .matches-expand-chevron{transform:rotate(180deg)}
 .matches-older-divider td{padding-top:16px!important;padding-bottom:13px!important;background:#182337;color:#b0c0d9;font-size:11px;font-weight:850;letter-spacing:.08em;text-transform:uppercase}
 @media(max-width:690px){.trend-legend{gap:8px}.trend-legend-item{font-size:11px;padding:7px 10px}.matches-history-actions{padding:15px;align-items:stretch;flex-direction:column}.matches-expand{width:100%}}
+
+
+/* v2.4.5 — Paleta compartilhada entre linhas SVG, pontos e legenda.
+   As classes são servidas por /static/style.css para respeitar style-src 'self'. */
+.trend-series-0{--trend-series-color:#c6ef50}
+.trend-series-1{--trend-series-color:#9e8eff}
+.trend-series-2{--trend-series-color:#69d7e3}
+.trend-series-3{--trend-series-color:#f2b47c}
+.trend-series-4{--trend-series-color:#f18ba8}
+.trend-chart .trend-line{stroke:var(--trend-series-color,#a9b4c8)}
+.trend-chart .trend-point{fill:var(--trend-series-color,#a9b4c8)}
+.trend-legend-item .legend-dot{background-color:var(--trend-series-color,#a9b4c8)}
+
+/* A barra de tribos também não utiliza mais style="width:..." (bloqueado pela CSP). */
+.tribe-progress{display:block;appearance:none;-webkit-appearance:none;width:100%;height:8px;border:0;border-radius:999px;overflow:hidden;background:#2a354a}
+.tribe-progress::-webkit-progress-bar{background:#2a354a;border-radius:999px}
+.tribe-progress::-webkit-progress-value{background:linear-gradient(90deg,var(--violet),var(--lime));border-radius:999px}
+.tribe-progress::-moz-progress-bar{background:linear-gradient(90deg,var(--violet),var(--lime));border-radius:999px}
