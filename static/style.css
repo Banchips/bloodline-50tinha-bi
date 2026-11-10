@@ -408,3 +408,18 @@ a:focus-visible{outline:2px solid var(--lime);outline-offset:3px}
 .review-history-fold>summary:focus-visible{outline:2px solid var(--violet);outline-offset:4px;border-radius:7px}
 .review-history-fold .review-list{margin-top:3px}
 @media(max-width:700px){.review-history-fold{padding:0 12px 12px}.review-history-fold>summary{gap:8px}.review-item{gap:12px}}
+
+/* v2.4.3 — cadastro de temporadas/tribos no topo e diretório pesquisável abaixo */
+.roster-catalog-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.roster-players-panel,.roster-catalog-grid + .access-approval-panel{margin-top:18px}
+.roster-players-panel>.panel-heading{align-items:center;padding-bottom:4px}
+.roster-players-panel>.panel-heading p{max-width:670px}
+.roster-count{display:inline-flex;align-items:center;white-space:nowrap;background:#202b3e;border:1px solid #394a61;border-radius:100px;padding:8px 12px;color:#adbbcf;font-size:11px;font-weight:800}
+.roster-player-form{display:flex;align-items:stretch;gap:10px;margin:17px 0 8px}
+.roster-player-form input{flex:1;min-width:0;min-height:44px;border:1px solid #38455e;border-radius:10px;background:#0e1727;color:#f4f6ff;padding:12px 14px;outline:none}
+.roster-player-form input:focus{border-color:var(--violet);box-shadow:0 0 0 2px #968bff35}
+.roster-player-form button{flex-shrink:0}
+.roster-player-list{max-height:600px}
+.roster-players-panel .manager-item-recovery .manager-identity{min-width:0;flex:1}
+.sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+@media(max-width:690px){.roster-catalog-grid{grid-template-columns:1fr}.roster-player-form{flex-direction:column}.roster-players-panel>.panel-heading{align-items:stretch}.roster-count{align-self:flex-start}}

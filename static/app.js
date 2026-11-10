@@ -348,8 +348,23 @@ function renderAdmin(){
  $('mPlayer').innerHTML=selectOptions(m.players,existingP,'Selecione um jogador');
  $('mTribe').innerHTML=selectOptions(m.tribes,existingT,'Selecione uma tribo');
  updateAdminDeckOptions();
- renderManager('seasonManager',m.seasons,'seasons');renderManager('playerManager',m.players,'players');renderManager('tribeManager',m.tribes,'tribes');
+ renderManager('seasonManager',m.seasons,'seasons');renderPlayerDirectory();renderManager('tribeManager',m.tribes,'tribes');
  renderExclusions();renderAdminMatches();renderTableReview();
+}
+// Pesquisa instantânea e cadastro pelo mesmo campo, sem alterar os dados originais.
+function renderPlayerDirectory(){
+  const all=state.admin?.master?.players||[];
+  const field=$('newPlayer'),target=$('playerManager');
+  if(!field||!target)return;
+  const term=normalizeSearch(field.value.trim());
+  const found=term?all.filter(p=>normalizeSearch(p.name).includes(term)):all;
+  const duplicate=Boolean(term&&all.some(p=>normalizeSearch(p.name)===term));
+  const button=$('registerPlayerButton');
+  if(button){button.disabled=duplicate;button.title=duplicate?'Este jogador já está cadastrado.':'Cadastrar um novo jogador';}
+  const counter=$('playerDirectoryCount');
+  if(counter)counter.textContent=term?`${found.length} de ${all.length} jogador(es)`:`${all.length} jogador(es)`;
+  if(found.length)renderManager('playerManager',found,'players');
+  else target.innerHTML=term?'<p class="muted-note">Nenhum jogador encontrado. Se for um participante novo, clique em Cadastrar jogador.</p>':'<p class="muted-note">Nenhum jogador cadastrado.</p>';
 }
 function renderManager(id,items,category){
  $(id).innerHTML=items.length?items.map(item=>{
@@ -1235,7 +1250,7 @@ async function refreshRecoveryAudit(){
 }
 function renderPlayerAccountRecovery(){
   if(!state.admin?.master?.players)return;
-  renderManager('playerManager',state.admin.master.players,'players');
+  renderPlayerDirectory();
 }
 async function refreshPlayerAccessRequests(){
   try{
@@ -1411,6 +1426,7 @@ function bindEvents(){
  $('exSeason').addEventListener('change',renderExclusions);
  $('mPlayer').addEventListener('change',updateAdminDeckOptions);$('mTribe').addEventListener('change',updateAdminDeckOptions);
  $('adminMatchSearch').addEventListener('input',renderAdminMatches);
+ $('newPlayer').addEventListener('input',renderPlayerDirectory);
  for(const [form,endpoint,input] of [['seasonForm','seasons','newSeason'],['playerForm','players','newPlayer'],['tribeForm','tribes','newTribe']]){
    $(form).addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/'+endpoint,{method:'POST',body:{name:$(input).value.trim()}});$(form).reset();toast('Cadastro criado.');await reloadAll()}catch(err){toast(err.message,true)}});
  }
