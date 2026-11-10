@@ -456,3 +456,22 @@ a:focus-visible{outline:2px solid var(--lime);outline-offset:3px}
 .tribe-progress::-webkit-progress-bar{background:#2a354a;border-radius:999px}
 .tribe-progress::-webkit-progress-value{background:linear-gradient(90deg,var(--violet),var(--lime));border-radius:999px}
 .tribe-progress::-moz-progress-bar{background:linear-gradient(90deg,var(--violet),var(--lime));border-radius:999px}
+
+
+/* v2.4.6 — Histórico pessoal: último dia visível e dias anteriores retráteis.
+   Sem estilos inline, compatível com a CSP do Railway. */
+.player-history-date-note{color:#acbed5;font-size:12px;margin:0 0 13px;line-height:1.5}
+.player-history-date-note strong{color:#ecf3fc}
+.player-history-older{border:1px solid #35445f;border-radius:11px;background:#17243a;margin-top:15px;overflow:hidden}
+.player-history-older-trigger{list-style:none;display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;padding:15px 18px;color:#eaf1fb;font-weight:800;font-size:12px;transition:background .18s}
+.player-history-older-trigger::-webkit-details-marker{display:none}
+.player-history-older-trigger:hover{background:#22324a}
+.player-history-older-trigger:focus-visible{outline:2px solid var(--lime);outline-offset:-3px}
+.player-history-older-trigger small{color:#afc0d8;font-size:11px}
+.player-history-chevron{font-size:23px;color:#c8ef65;line-height:1;transition:transform .18s}
+.player-history-older[open] .player-history-chevron{transform:rotate(180deg)}
+.player-history-older-content{padding:0 14px 15px;border-top:1px solid #35445f}
+.player-history-older-heading{color:#b5c5db;font-size:11px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;margin:14px 0 11px}
+.player-history-older-content .player-table-scroll{border-radius:9px}
+.player-history-footnote{font-size:11px;margin-top:14px}
+@media(max-width:680px){.player-history-older-trigger{padding:14px}.player-history-older-content{padding:0 10px 11px}}

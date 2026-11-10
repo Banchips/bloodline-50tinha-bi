@@ -1257,11 +1257,25 @@ function renderPlayerResults(data){
     const wr=d.matches?((d.wins/d.matches)*100).toLocaleString('pt-BR',{maximumFractionDigits:1})+'%':'—';
     return `<tr><td><a href="${safe(d.url)}" target="_blank" rel="noopener noreferrer">${safe(d.name)} ↗</a><small class="player-stat-secondary">${safe(d.tribe_name)}</small></td><td>${d.points}</td><td>${d.matches}</td><td>${d.wins} / ${d.draws} / ${d.losses}</td><td>${wr}</td></tr>`;
   }).join('');
-  const history=(data.recent_matches||[]).map(m=>`<tr><td>${fmtDate(m.event_date)}</td><td>${safe(m.season_name)} · ${safe(m.episode)} · R${m.round_no}</td><td>${safe(m.tribe_name)}${m.deck_name?`<small class="player-stat-secondary">${safe(m.deck_name)}</small>`:''}</td><td><span class="result-pill result-${m.result}">${safe(resultLabels[m.result]||m.result)}</span></td><td>${m.points}${m.excluded?' <small class="zero-note">(tribo não pontua)</small>':''}</td></tr>`).join('');
+  // A Área do Jogador segue o Histórico público: último dia visível e demais datas recolhidas.
+  // A API já entrega os jogos ordenados por data decrescente, respeitando a temporada filtrada.
+  const matches=data.recent_matches||[];
+  const latestDate=matches[0]?.event_date;
+  const latestMatches=matches.filter(m=>m.event_date===latestDate);
+  const olderMatches=matches.filter(m=>m.event_date!==latestDate);
+  const historyRows=items=>items.map(m=>`<tr><td>${fmtDate(m.event_date)}</td><td>${safe(m.season_name)} · ${safe(m.episode)} · R${m.round_no}</td><td>${safe(m.tribe_name)}${m.deck_name?`<small class="player-stat-secondary">${safe(m.deck_name)}</small>`:''}</td><td><span class="result-pill result-${m.result}">${safe(resultLabels[m.result]||m.result)}</span></td><td>${m.points}${m.excluded?' <small class="zero-note">(tribo não pontua)</small>':''}</td></tr>`).join('');
+  const historyHead='<thead><tr><th>Data</th><th>Evento</th><th>Tribo / Deck</th><th>Resultado</th><th>Pontos</th></tr></thead>';
+  const latestHistory=historyRows(latestMatches);
+  const olderHistory=historyRows(olderMatches);
   $('playerStatsContent').innerHTML=`<div class="player-stats-grid">${stats.map(([name,value])=>`<div class="player-stat-tile"><span>${name}</span><strong>${value}</strong></div>`).join('')}</div>
     <div class="player-stat-group"><h3>Desempenho por tribo</h3><div class="player-table-scroll"><table class="player-stat-table"><thead><tr><th>Tribo</th><th>Pontos</th><th>Partidas</th><th>V / E / D</th><th>Win rate</th><th>OPW%</th></tr></thead><tbody>${tribes||'<tr><td colspan="6" class="muted-note">Nenhuma partida registrada nesta seleção.</td></tr>'}</tbody></table></div></div>
     <div class="player-stat-group"><h3>Decks utilizados</h3><div class="player-table-scroll"><table class="player-stat-table"><thead><tr><th>Deck / Tribo</th><th>Pontos</th><th>Partidas</th><th>V / E / D</th><th>Win rate</th></tr></thead><tbody>${decks||'<tr><td colspan="5" class="muted-note">Nenhum deck vinculado a partidas nesta seleção. Partidas sem deck ainda contam na tribo.</td></tr>'}</tbody></table></div></div>
-    <div class="player-stat-group"><h3>Histórico recente</h3><div class="player-table-scroll"><table class="player-stat-table"><thead><tr><th>Data</th><th>Evento</th><th>Tribo / Deck</th><th>Resultado</th><th>Pontos</th></tr></thead><tbody>${history||'<tr><td colspan="5" class="muted-note">Nenhum resultado aprovado nesta seleção.</td></tr>'}</tbody></table></div><p class="muted-note">Exibindo até 60 participações recentes. Tribos que não pontuam continuam no histórico, com zero ponto válido.</p></div>`;
+    <div class="player-stat-group player-history-group"><h3>Histórico recente</h3>
+      ${latestDate?`<p class="player-history-date-note">Último dia jogado: <strong>${fmtDate(latestDate)}</strong> · ${latestMatches.length} resultado${latestMatches.length===1?'':'s'}</p>`:''}
+      <div class="player-table-scroll"><table class="player-stat-table">${historyHead}<tbody>${latestHistory||'<tr><td colspan="5" class="muted-note">Nenhum resultado aprovado nesta seleção.</td></tr>'}</tbody></table></div>
+      ${olderMatches.length?`<details class="player-history-older"><summary class="player-history-older-trigger"><span>Ver partidas anteriores <small>(${olderMatches.length})</small></span><span class="player-history-chevron" aria-hidden="true">⌄</span></summary><div class="player-history-older-content"><p class="player-history-older-heading">Partidas de dias anteriores</p><div class="player-table-scroll"><table class="player-stat-table">${historyHead}<tbody>${olderHistory}</tbody></table></div></div></details>`:''}
+      <p class="muted-note player-history-footnote">Exibindo até 60 participações recentes. Tribos que não pontuam continuam no histórico, com zero ponto válido.</p>
+    </div>`;
 }
 function showRecoveryCode(code,title){
   const modal=$('recoveryCodeOverlay');
