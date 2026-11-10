@@ -178,24 +178,57 @@ function renderTribes(){
     return `<div class="tribe-bar-item"><div class="tribe-bar-top"><span>${safe(t.name)} ${blocked?'<span class="zero-note">· Não pontua</span>':''}</span><span class="${blocked?'excluded':''}">${t.points} pts</span></div><div class="bar-track"><div style="width:${(t.points/max*100).toFixed(1)}%"></div></div><div class="bar-sub">${t.matches} partida(s) · ${t.players} jogador(es)</div></div>`
   }).join(''):'<div class="empty">As tribos aparecem após o primeiro resultado.</div>';
 }
+// O histórico público abre compacto, exibindo todas as partidas do último dia.
+// A busca consulta também dias anteriores, mesmo com o histórico recolhido.
+let matchesExpanded=false;
 function renderMatches(){
-  const needle=$('matchesSearch').value.trim().toLocaleLowerCase();
-  const records=(state.public?.recent_matches||[]).filter(m=>(`${m.player_name} ${m.tribe_name} ${m.event_date} ${fmtDate(m.event_date)} ${m.episode} ${m.season_name}`).toLocaleLowerCase().includes(needle));
-  $('matchRows').innerHTML=records.length?records.slice(0,80).map(m=>`<tr><td>${fmtDate(m.event_date)}</td><td>${safe(m.episode||'Etapa')} / R${m.round_no}${state.season==='all'?`<br><small>${safe(m.season_name)}</small>`:''}</td><td><strong>${safe(m.player_name)}</strong></td><td>${safe(m.tribe_name)}${m.excluded?' <span class="zero-note">(sem pontos)</span>':''}</td><td><span class="result-pill result-${m.result}">${resultLabels[m.result]}</span></td><td class="${m.excluded?'excluded':''}"><strong>${m.points}</strong>${m.excluded?'<small> · bloqueada</small>':''}</td></tr>`).join(''):'<tr><td class="empty" colspan="6">Nenhuma partida encontrada.</td></tr>';
+  const needle=normalizeSearch($('matchesSearch').value.trim());
+  const all=state.public?.recent_matches||[]; // recebidos do servidor do mais recente ao mais antigo
+  const latestDate=all[0]?.event_date;
+  const filtered=all.filter(m=>normalizeSearch(`${m.player_name} ${m.tribe_name} ${m.event_date} ${fmtDate(m.event_date)} ${m.episode} ${m.season_name}`).includes(needle));
+  const older=all.filter(m=>m.event_date!==latestDate);
+  const showAll=Boolean(needle)||matchesExpanded;
+  const visible=showAll?filtered:filtered.filter(m=>m.event_date===latestDate);
+  const row=m=>`<tr><td>${fmtDate(m.event_date)}</td><td>${safe(m.episode||'Etapa')} / R${m.round_no}${state.season==='all'?`<br><small>${safe(m.season_name)}</small>`:''}</td><td><strong>${safe(m.player_name)}</strong></td><td>${safe(m.tribe_name)}${m.excluded?' <span class="zero-note">(sem pontos)</span>':''}</td><td><span class="result-pill result-${m.result}">${safe(resultLabels[m.result]||m.result)}</span></td><td class="${m.excluded?'excluded':''}"><strong>${m.points}</strong>${m.excluded?'<small> · bloqueada</small>':''}</td></tr>`;
+  let html='';
+  if(!visible.length){
+    html='<tr><td class="empty" colspan="6">Nenhuma partida encontrada.</td></tr>';
+  }else if(showAll&&!needle&&older.length){
+    const latest=visible.filter(m=>m.event_date===latestDate);
+    const earlier=visible.filter(m=>m.event_date!==latestDate);
+    html=latest.map(row).join('')+`<tr class="matches-older-divider"><td colspan="6">Partidas de dias anteriores</td></tr>`+earlier.map(row).join('');
+  }else html=visible.map(row).join('');
+  $('matchRows').innerHTML=html;
+
+  const actions=$('matchesHistoryActions');
+  const summary=$('matchesHistorySummary');
+  const button=$('matchesExpand');
+  if(!all.length){actions.classList.add('hidden');return;}
+  actions.classList.remove('hidden');
+  if(needle){
+    summary.textContent=`${filtered.length} resultado(s) encontrados em todas as datas disponíveis.`;
+    button.classList.add('hidden');
+  }else{
+    const dayCount=all.length-older.length;
+    summary.textContent=`Último dia jogado: ${fmtDate(latestDate)} · ${dayCount} resultado${dayCount===1?'':'s'}`;
+    button.classList.toggle('hidden',!older.length);
+    button.setAttribute('aria-expanded',String(matchesExpanded));
+    button.querySelector('.matches-expand-label').textContent=matchesExpanded?'Recolher histórico':`Ver partidas anteriores (${older.length})`;
+  }
 }
 function renderTrend(){
   const d=state.public;
   const events=d?.trend||[];
   const players=d?.ranking.slice(0,5)||[];
   if(players.length===0 || events.length===0){$('trendChart').innerHTML='<div class="empty">A evolução será exibida após o cadastro das partidas.</div>';$('trendLegend').innerHTML='';return}
-  const visible=players.map(p=>({name:p.name+' · '+p.tribe_name,id:p.rank_key,values:events.map(ev=>Number(ev.points[p.rank_key]||0)),sum:p.points}));
+  const visible=players.map(p=>({name:p.name,tribe:p.tribe_name,id:p.rank_key,values:events.map(ev=>Number(ev.points[p.rank_key]||0)),sum:p.points}));
   const width=1050,height=255,left=48,right=25,top=18,bottom=40;
   const max=Math.max(3,...visible.map(p=>p.sum));const x=i=>left+(events.length===1?(width-left-right)/2:i*(width-left-right)/(events.length-1));const y=v=>top+(height-top-bottom)*(1-v/max);
   const grid=[0,.25,.5,.75,1].map(k=>`<line x1="${left}" y1="${y(k*max)}" x2="${width-right}" y2="${y(k*max)}" stroke="#2c3850"/><text x="${left-10}" y="${y(k*max)+4}" text-anchor="end" fill="#8794aa" font-size="11">${Math.round(k*max)}</text>`).join('');
   const labels=events.map((ev,i)=>(events.length>8 && i%Math.ceil(events.length/8)!==0 && i!==events.length-1)?'':`<text x="${x(i)}" y="${height-14}" text-anchor="middle" fill="#8794aa" font-size="10">${safe(fmtDate(ev.date).slice(0,5))}</text>`).join('');
   const lines=visible.map((p,j)=>`<polyline points="${p.values.map((v,i)=>`${x(i)},${y(v)}`).join(' ')}" fill="none" stroke="${colors[j]}" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>${p.values.map((v,i)=>`<circle cx="${x(i)}" cy="${y(v)}" r="3.5" fill="${colors[j]}"/>`).join('')}`).join('');
   $('trendChart').innerHTML=`<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Evolução acumulada de pontos das cinco melhores combinações jogador e tribo">${grid}${labels}${lines}</svg>`;
-  $('trendLegend').innerHTML=visible.map((p,i)=>`<span><i class="legend-dot" style="background:${colors[i]}"></i>${safe(p.name)} · ${p.sum} pts</span>`).join('');
+  $('trendLegend').innerHTML=visible.map((p,i)=>`<span class="trend-legend-item"><i class="legend-dot" style="background:${colors[i]}" aria-hidden="true"></i><span>${safe(p.name)} · ${safe(p.tribe)} · <strong>${intFmt(p.sum)} pts</strong></span></span>`).join('');
 }
 // Navegação por fragmentos: cada tela tem link próprio, suporta botão direito,
 // nova aba, histórico Voltar/Avançar e F5 sem depender de rotas adicionais no servidor.
@@ -1302,8 +1335,9 @@ function bindEvents(){
    }catch(err){toast(err.message,true)}finally{button.disabled=false}
  });
  window.addEventListener('hashchange',()=>applyRoute(true));
- $('seasonSelect').addEventListener('change',e=>{state.season=e.target.value;loadPublic()});
+ $('seasonSelect').addEventListener('change',e=>{state.season=e.target.value;matchesExpanded=false;loadPublic()});
  $('rankingSearch').addEventListener('input',renderRanking);$('matchesSearch').addEventListener('input',renderMatches);
+ $('matchesExpand').addEventListener('click',()=>{matchesExpanded=!matchesExpanded;renderMatches()});
  $('closeDetail').addEventListener('click',()=>navigateTo('#/ranking'));$('detailOverlay').addEventListener('click',e=>{if(e.target===$('detailOverlay'))navigateTo('#/ranking')});
  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('detailOverlay').classList.contains('hidden'))navigateTo('#/ranking')});
  $('playerLoginForm').addEventListener('submit',async e=>{
