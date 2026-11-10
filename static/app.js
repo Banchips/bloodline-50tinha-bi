@@ -870,13 +870,47 @@ async function loadPublishedRounds(token=state.roundShareToken){
     renderPublishedRounds();
   }catch(err){state.publishedRounds=[];renderPublishedRounds();toast('Link privado inválido ou expirado: '+err.message,true)}
 }
+function renderEventFinalStandings(event){
+  const d=event.final_standings;
+  if(!event.finished || !d)return '';
+  const rounds=d.round_numbers||[];
+  const results={V:'V',E:'E',D:'D',C:'C'};
+  const rows=(d.players||[]).map(p=>{
+    const isPodium=p.position===1||p.position===2||p.position===3;
+    const position=p.position?(p.position+'º'):'—';
+    const roundCells=rounds.map(no=>{
+      const result=p.round_results?.[String(no)];
+      return `<td class="event-final-round">${result?`<span class="event-final-result result-${safe(result.result)}" title="${safe(result.result==='V'?'Vitória':result.result==='E'?'Empate':result.result==='D'?'Derrota':'Resultado')}">${safe(results[result.result]||result.result)} · ${intFmt(result.points)}</span>`:'—'}</td>`;
+    }).join('');
+    return `<tr class="${p.position===1?'event-final-winner':''}"><td class="event-final-place">${p.position===1&&!p.tied?'🏆 ':''}${position}</td><td class="event-final-player"><strong>${safe(p.player_name)}</strong><small>${safe(p.tribe_name)}</small></td>${roundCells}<td>${p.wins} / ${p.draws} / ${p.losses}</td><td class="event-final-points">${intFmt(p.points)} pts</td><td>${p.opw_pct===null?'—':Number(p.opw_pct).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%'}</td><td><span class="event-final-status ${isPodium?'podium':''}">${safe(p.status)}</span></td></tr>`;
+  }).join('');
+  return `<section class="panel padded event-final-panel" aria-label="Classificação final do evento">
+    <div class="round-heading"><div><span class="kicker">EVENTO ENCERRADO · RESULTADO OFICIAL</span><h2>🏆 Classificação final</h2>
+    <p>${safe(event.name)} · ${safe(fmtDate(event.event_date))} · ${safe(event.episode)} · ${d.total_players} inscrito(s)</p></div>
+    <div class="event-final-actions"><button id="copyEventFinalResult" class="button-primary" type="button">Copiar classificação</button><button id="copyEventFinalLink" class="button-outline" type="button">Copiar link</button></div></div>
+    <div class="table-scroller"><table class="event-final-table"><thead><tr><th>#</th><th>JOGADOR / TRIBO</th>${rounds.map(n=>`<th>R${intFmt(n)}</th>`).join('')}<th>V / E / D</th><th>PONTOS</th><th>OPW%</th><th>STATUS</th></tr></thead>
+    <tbody>${rows||`<tr><td colspan="${rounds.length+6}" class="empty">Nenhum jogador inscrito.</td></tr>`}</tbody></table></div>
+    <p class="muted-note event-final-note">Pontuação exclusiva deste evento, calculada com mesas aprovadas e rodadas finalizadas. Desempate: pontos, OPW% do evento, vitórias válidas e partidas válidas. Empates persistentes compartilham a posição. Tribos bloqueadas não pontuam.</p>
+  </section>`;
+}
 function renderPublishedRounds(){
   const events=state.publishedRounds;
-  if(!events.length){$('roundsEventPicker').innerHTML='';$('roundsPublicContent').innerHTML='<section class="panel padded"><h2>Pareamentos privados</h2><p>Você precisa do link enviado pela organização, e as rodadas precisam estar publicadas.</p></section>';return;}
+  if(!events.length){$('roundsEventPicker').innerHTML='';$('roundsPublicContent').innerHTML='<section class="panel padded"><h2>Pareamentos privados</h2><p>Você precisa do link enviado pela organização, e as rodadas precisam estar publicadas ou finalizadas.</p></section>';return;}
   if(!events.some(e=>e.id===state.selectedRoundEventId))state.selectedRoundEventId=events[0].id;
-  $('roundsEventPicker').innerHTML=events.map(e=>`<a class="event-picker-item ${state.selectedRoundEventId===e.id?'selected':''}" href="#/rounds/${safe(state.roundShareToken)}"><strong>${safe(e.name)}</strong><small>${safe(fmtDate(e.event_date))} · ${safe(e.season_name)} · ${safe(e.episode)}</small></a>`).join('');
+  $('roundsEventPicker').innerHTML=events.map(e=>`<a class="event-picker-item ${state.selectedRoundEventId===e.id?'selected':''}" href="#/rounds/${safe(state.roundShareToken)}"><strong>${safe(e.name)}</strong><small>${safe(fmtDate(e.event_date))} · ${safe(e.season_name)} · ${safe(e.episode)}${e.finished?' · Encerrado':''}</small></a>`).join('');
   const event=events.find(e=>e.id===state.selectedRoundEventId);
-  $('roundsPublicContent').innerHTML=event.rounds.map(r=>`<section class="panel padded"><div class="round-heading"><div><span class="kicker">${safe(event.name)} · ${safe(event.episode)}</span><h2>Rodada ${r.round_no}</h2><p>${safe(fmtDate(event.event_date))} · ${r.tables.length} mesa(s)</p></div><span class="round-status published">● Publicada</span></div><div class="pairing-grid">${r.tables.map(t=>`<article class="pairing-card"><h3>Mesa ${t.table_no}</h3>${t.players.map(p=>`<div class="pairing-person"><strong>${safe(p.player_name)}</strong><small>${safe(p.tribe_name)}</small></div>`).join('')}</article>`).join('')}</div></section>`).join('');
+  const roundSections=event.rounds.map(r=>`<section class="panel padded"><div class="round-heading"><div><span class="kicker">${safe(event.name)} · ${safe(event.episode)}</span><h2>Rodada ${r.round_no}</h2><p>${safe(fmtDate(event.event_date))} · ${r.tables.length} mesa(s)</p></div><span class="round-status ${r.status==='finished'?'finished':'published'}">● ${r.status==='finished'?'Finalizada':'Publicada'}</span></div><div class="pairing-grid">${r.tables.map(t=>`<article class="pairing-card"><h3>Mesa ${t.table_no}</h3>${t.players.map(p=>`<div class="pairing-person"><strong>${safe(p.player_name)}</strong><small>${safe(p.tribe_name)}</small></div>`).join('')}</article>`).join('')}</div></section>`).join('');
+  $('roundsPublicContent').innerHTML=renderEventFinalStandings(event)+roundSections;
+  if(event.finished&&event.final_standings){
+    const d=event.final_standings;
+    const text=[`🏆 BLOODLINE · ${event.name}`,`${fmtDate(event.event_date)} · ${event.episode}`,`CLASSIFICAÇÃO FINAL`,...d.players.map(p=>`${p.position?p.position+'º':'—'} ${p.player_name} (${p.tribe_name}) — ${p.points} pts · ${p.status}`),`Confira as rodadas: ${location.origin}${location.pathname}#/rounds/${state.roundShareToken}`].join('\n');
+    $('copyEventFinalResult')?.addEventListener('click',()=>copyEventFinalText(text));
+    $('copyEventFinalLink')?.addEventListener('click',()=>copyEventFinalText(`${location.origin}${location.pathname}#/rounds/${state.roundShareToken}`));
+  }
+}
+async function copyEventFinalText(text){
+  try{await navigator.clipboard.writeText(text);toast('Copiado! Pronto para compartilhar.');}
+  catch{prompt('Copie o texto para compartilhar:',text);}
 }
 // Área de criação, ajustes e publicação de pareamentos pela organização.
 function renderEventRounds(){

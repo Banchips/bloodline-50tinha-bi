@@ -475,3 +475,22 @@ a:focus-visible{outline:2px solid var(--lime);outline-offset:3px}
 .player-history-older-content .player-table-scroll{border-radius:9px}
 .player-history-footnote{font-size:11px;margin-top:14px}
 @media(max-width:680px){.player-history-older-trigger{padding:14px}.player-history-older-content{padding:0 10px 11px}}
+
+/* v2.4.8 — classificação final no link compartilhável das rodadas */
+.event-final-panel{border-color:#668a53;background:linear-gradient(135deg,#18283a,#161f30)}
+.event-final-panel .kicker{color:#c6ef50}.event-final-panel h2{font-size:26px}
+.event-final-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.event-final-actions button{cursor:pointer;font-size:11px}
+.event-final-table{width:100%;border-collapse:collapse;min-width:690px;font-size:12px}
+.event-final-table th{text-align:left;font-size:10px;white-space:nowrap;color:#9cadc5;letter-spacing:.4px}
+.event-final-table th,.event-final-table td{padding:12px 10px;border-bottom:1px solid #304057}
+.event-final-table td{color:#dae4f2}.event-final-table .event-final-place{font-weight:900;color:#d0f98d;white-space:nowrap}
+.event-final-table .event-final-player strong{display:block;color:#f1f5fd}
+.event-final-table .event-final-player small{display:block;color:#9db0c8;margin-top:4px}
+.event-final-table .event-final-points{font-size:14px;font-weight:900;color:#d7f99b;white-space:nowrap}
+.event-final-table .event-final-winner{background:#28372b}
+.event-final-status{font-size:10px;color:#b6c6db;white-space:nowrap}
+.event-final-status.podium{color:#d7f9a2;font-weight:800}
+.event-final-result{font-size:11px;white-space:nowrap;padding:4px 6px;border-radius:6px;font-weight:800}
+.event-final-note{margin:12px 0 0;line-height:1.5}
+@media(max-width:650px){.event-final-panel h2{font-size:22px}.event-final-actions{width:100%}}

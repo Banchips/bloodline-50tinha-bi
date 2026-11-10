@@ -1265,7 +1265,7 @@ def list_league_events(db):
 
 def event_round_list(db, event_id, published_only=False, include_admin_results=False):
     # Stable snapshots; public output excludes payment/check-in.
-    where = ' AND r.status=\'published\'' if published_only else ''
+    where = " AND (r.status='published' OR r.finalized_at IS NOT NULL)" if published_only else ''
     rows = [dict(row) for row in db.execute('''SELECT r.id,r.event_id,r.round_no,CASE WHEN r.finalized_at IS NOT NULL THEN 'finished' ELSE r.status END AS status,
                       r.created_at,r.published_at,r.finalized_at,r.pairing_mode,r.pairing_note FROM event_rounds r
                       WHERE r.event_id=?'''+where+' ORDER BY r.round_no', (event_id,))]
@@ -1300,15 +1300,120 @@ def event_round_list(db, event_id, published_only=False, include_admin_results=F
     return rows
 
 
+def event_final_standings(db, event_id):
+    '''Classificação da etapa, somente com resultados oficiais das mesas finalizadas.
+
+    O vínculo da mesa ao pareamento impede que outra partida da mesma data/EP
+    seja contabilizada. Não retorna pagamento, check-in nem dados de conta.
+    '''
+    event=db.execute('SELECT season_id,ended_at FROM league_events WHERE id=?',(event_id,)).fetchone()
+    if not event or not event['ended_at']:
+        return None
+    round_numbers=[r['round_no'] for r in db.execute('''SELECT round_no FROM event_rounds
+        WHERE event_id=? AND finalized_at IS NOT NULL ORDER BY round_no''',(event_id,))]
+    blocked={r['tribe_id'] for r in db.execute('SELECT tribe_id FROM exclusions WHERE season_id=?',(event['season_id'],))}
+    standings={}
+    for reg in db.execute('''SELECT er.player_id,er.tribe_id,er.dropped_after_round,
+              p.name AS player_name,t.name AS tribe_name
+              FROM event_registrations er JOIN players p ON p.id=er.player_id
+              JOIN tribes t ON t.id=er.tribe_id WHERE er.event_id=?''',(event_id,)):
+        item=dict(reg)
+        item.update(points=0,wins=0,draws=0,losses=0,matches=0,valid_matches=0,
+                    valid_wins=0,excluded_matches=0,round_results={},opw_pct=None,
+                    position=None,tied=False,status='Não participou')
+        standings[item['player_id']]=item
+    table_seats={}
+    for row in db.execute('''SELECT m.player_id,m.tribe_id,m.result,m.round_no,m.table_id
+         FROM event_rounds rd JOIN event_pairings ep ON ep.round_id=rd.id
+         JOIN game_tables g ON g.pairing_id=ep.id AND g.status='approved'
+         JOIN matches m ON m.table_id=g.id
+         WHERE rd.event_id=? AND rd.finalized_at IS NOT NULL
+         ORDER BY rd.round_no,ep.table_no,m.id''',(event_id,)):
+        pid=row['player_id']
+        member=standings.get(pid)
+        if member is None or row['tribe_id']!=member['tribe_id']:
+            continue  # Partida divergente da inscrição não entra na classificação.
+        if str(row['round_no']) in member['round_results']:
+            continue  # Evitar contar duas vezes a mesma rodada em dados antigos.
+        excluded=row['tribe_id'] in blocked
+        pts=0 if excluded else RULES.get(row['result'],0)
+        member['points']+=pts
+        member['matches']+=1
+        member['wins']+=row['result']=='V'
+        member['draws']+=row['result']=='E'
+        member['losses']+=row['result']=='D'
+        member['excluded_matches']+=int(excluded)
+        member['valid_matches']+=int(not excluded)
+        member['valid_wins']+=int(not excluded and row['result']=='V')
+        member['round_results'][str(row['round_no'])]={'result':row['result'],'points':pts}
+        table_seats.setdefault(row['table_id'],[]).append((pid,excluded))
+    # OPW% do próprio evento, usando as mesas oficiais e o mesmo piso de 33%
+    # aplicado no ranking geral. Não se mistura com partidas de outras etapas.
+    opponents={pid:[] for pid in standings}
+    known_rounds={pid:0 for pid in standings}
+    for seats in table_seats.values():
+        if len(seats) not in (3,4) or len({pid for pid,_ in seats})!=len(seats):
+            continue
+        for pid,excluded in seats:
+            if excluded:continue
+            known_rounds[pid]+=1
+            for opponent_id,_ in seats:
+                if opponent_id==pid:continue
+                opponent=standings[opponent_id]
+                ratio=opponent['points']/(3*opponent['valid_matches']) if opponent['valid_matches'] else 0
+                opponents[pid].append(max(0.33,ratio))
+    for pid,member in standings.items():
+        if member['valid_matches'] and known_rounds[pid]==member['valid_matches'] and opponents[pid]:
+            member['opw_pct']=round(100*sum(opponents[pid])/len(opponents[pid]),2)
+    valid=[p for p in standings.values() if p['valid_matches']]
+    # Ordem oficial da liga: pontos > OPW% > vitórias válidas > partidas válidas.
+    # O nome só desempata a apresentação: igualdade nos critérios mantém a posição.
+    def key(p):
+        return (p['points'],p['opw_pct'] if p['opw_pct'] is not None else -1,
+                p['valid_wins'],p['valid_matches'])
+    valid.sort(key=lambda p:(tuple(-x for x in key(p)),p['player_name'].casefold()))
+    for i,member in enumerate(valid):
+        member['position']=1+sum(key(other)!=key(member) for other in valid[:i]) if i else 1
+        member['tied']=sum(key(other)==key(member) for other in valid)>1
+        if member['position']==1:
+            member['status']='1º lugar (empate)' if member['tied'] else 'Campeão do evento'
+        elif member['position']==2:
+            member['status']='2º lugar'
+        elif member['position']==3:
+            member['status']='3º lugar'
+        else:
+            member['status']='Participante'
+        if member['dropped_after_round'] is not None:
+            member['status']+=' · Drop R'+str(member['dropped_after_round'])
+    inactive=[p for p in standings.values() if not p['valid_matches']]
+    for member in inactive:
+        if member['matches']:
+            member['status']='Tribo sem pontuação'
+        elif member['dropped_after_round'] is not None:
+            member['status']='Drop sem partidas'
+    inactive.sort(key=lambda p:p['player_name'].casefold())
+    # Campos internos auxiliares não precisam ir para o link compartilhado.
+    result=[]
+    for member in valid+inactive:
+        result.append({k:v for k,v in member.items() if k not in ('valid_matches','valid_wins','excluded_matches','tribe_id')})
+    return {'round_numbers':round_numbers,'players':result,'total_players':len(result),
+            'finished':True}
+
+
 def published_event_rounds(db, token):
     data=[]
-    for event in db.execute('''SELECT DISTINCT e.id,e.name,e.event_date,e.episode,s.name season_name
+    for event in db.execute('''SELECT DISTINCT e.id,e.name,e.event_date,e.episode,
+                  e.ended_at,s.name season_name
           FROM league_events e JOIN seasons s ON s.id=e.season_id
-          JOIN event_rounds r ON r.event_id=e.id AND r.status='published'
+          JOIN event_rounds r ON r.event_id=e.id
+               AND (r.status='published' OR r.finalized_at IS NOT NULL)
           WHERE e.rounds_share_token=?
           ORDER BY e.event_date DESC,e.id DESC LIMIT 80''',(token,)):
         ev=dict(event)
         ev['rounds']=event_round_list(db,ev['id'],True)
+        ev['final_standings']=event_final_standings(db,ev['id']) if ev['ended_at'] else None
+        ev['finished']=bool(ev['ended_at'])
+        del ev['ended_at']
         data.append(ev)
     return data
 
