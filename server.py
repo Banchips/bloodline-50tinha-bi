@@ -2156,10 +2156,10 @@ class Handler(BaseHTTPRequestHandler):
             path = target.path
             query = parse_qs(target.query)
             season = query.get('season',['all'])[0]
-            if path in ('/','/index.html','/static/style.css','/static/app.js'):
-                file_map = {'/': 'index.html','/index.html':'index.html','/static/style.css':'style.css','/static/app.js':'app.js'}
+            if path in ('/','/index.html','/static/style.css','/static/app.js','/static/bloodline-logo.jpg'):
+                file_map = {'/': 'index.html','/index.html':'index.html','/static/style.css':'style.css','/static/app.js':'app.js','/static/bloodline-logo.jpg':'bloodline-logo.jpg'}
                 f = ROOT / 'static' / file_map[path]
-                typ = 'text/html; charset=utf-8' if f.suffix=='.html' else ('text/css; charset=utf-8' if f.suffix=='.css' else 'application/javascript; charset=utf-8')
+                typ = 'text/html; charset=utf-8' if f.suffix=='.html' else ('text/css; charset=utf-8' if f.suffix=='.css' else ('image/jpeg' if f.suffix=='.jpg' else 'application/javascript; charset=utf-8'))
                 return self.respond(200,f.read_bytes(),typ)
             if path == '/api/events/rounds':
                 token=query.get('token',[''])[0]
