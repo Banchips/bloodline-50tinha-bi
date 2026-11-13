@@ -494,3 +494,23 @@ a:focus-visible{outline:2px solid var(--lime);outline-offset:3px}
 .event-final-result{font-size:11px;white-space:nowrap;padding:4px 6px;border-radius:6px;font-weight:800}
 .event-final-note{margin:12px 0 0;line-height:1.5}
 @media(max-width:650px){.event-final-panel h2{font-size:22px}.event-final-actions{width:100%}}
+
+/* v2.4.9 — edição auditada de tribo/decklist em eventos encerrados */
+.event-correction-note{display:block;margin-top:5px;color:#c6ef50;font-size:10px}
+.event-correction-form{display:flex;flex-direction:column;gap:9px;margin-top:7px;padding:12px;background:#101c2c;border:1px solid #738c5f;border-radius:9px}
+.event-correction-form.hidden{display:none}
+.event-correction-form strong{font-size:12px;color:#e4f6d1}
+.event-correction-form label{display:flex;flex-direction:column;gap:4px;font-size:11px;color:#b9cbe0}
+.event-correction-form select,.event-correction-form textarea{width:100%;max-width:100%;min-width:0;border:1px solid #627189;border-radius:7px;background:#202d42;color:#f4f6fc;padding:8px;font:inherit}
+.event-correction-form textarea{resize:vertical}
+.event-correction-form .event-correction-checkbox{display:flex;flex-direction:row;gap:7px;align-items:center}
+.event-correction-form .event-correction-checkbox input{width:auto}
+.event-correction-form small{font-size:10px;line-height:1.45;color:#a9bbd1}
+.event-actions-dropdown .event-correction-submit{border:1px solid #96b96a;background:#385233;color:#f0ffe4;text-align:center;font-weight:800}
+.event-actions-dropdown .event-correction-submit:disabled{opacity:.5;cursor:wait}
+.event-correction-audit{font-size:10px;line-height:1.4;padding:8px;color:#c4d3a8;border-left:2px solid #98b66c;overflow-wrap:anywhere}
+.event-roster-table select:disabled,.event-roster-table button:disabled{opacity:.6;cursor:not-allowed}
+
+.event-correction-new{display:flex;flex-direction:column;gap:9px}
+.event-correction-new.hidden{display:none}
+.event-correction-form input[type="url"],.event-correction-form input[data-event-correct-name]{width:100%;min-width:0;border:1px solid #627189;border-radius:7px;background:#202d42;color:#f4f6fc;padding:8px;font:inherit}

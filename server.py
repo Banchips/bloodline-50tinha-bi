@@ -201,6 +201,26 @@ def init_db():
             admin_id INTEGER REFERENCES admins(id) ON DELETE SET NULL,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )""")
+        # v2.4.9: correção pós-evento com trilha de auditoria.
+        db.execute('''CREATE TABLE IF NOT EXISTS event_registration_correction_audit (
+            id INTEGER PRIMARY KEY,
+            event_id INTEGER REFERENCES league_events(id) ON DELETE SET NULL,
+            registration_id INTEGER NOT NULL,
+            player_id INTEGER REFERENCES players(id) ON DELETE SET NULL,
+            admin_id INTEGER REFERENCES admins(id) ON DELETE SET NULL,
+            old_tribe_id INTEGER NOT NULL,
+            new_tribe_id INTEGER NOT NULL,
+            old_deck_id INTEGER,
+            new_deck_id INTEGER,
+            old_decklist_ok INTEGER NOT NULL,
+            new_decklist_ok INTEGER NOT NULL,
+            affected_pairings INTEGER NOT NULL DEFAULT 0,
+            affected_tables INTEGER NOT NULL DEFAULT 0,
+            affected_matches INTEGER NOT NULL DEFAULT 0,
+            reason TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )''')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_event_registration_corrections ON event_registration_correction_audit(event_id,created_at DESC)')
         # Migração incremental: não recria nem substitui o banco em produção.
         event_cols = {r['name'] for r in db.execute('PRAGMA table_info(league_events)')}
         if 'registrations_open' not in event_cols:
@@ -1248,6 +1268,15 @@ def list_league_events(db):
         if row['event_id'] in grouped:
             grouped[row['event_id']].append(row)
     for ev in events:
+        ev['corrections']=[dict(c) for c in db.execute('''SELECT c.registration_id,c.player_id,c.old_tribe_id,c.new_tribe_id,
+                  oldt.name AS old_tribe_name,newt.name AS new_tribe_name,
+                  c.old_deck_id,c.new_deck_id,c.reason,c.created_at,a.username AS admin_name,
+                  c.affected_matches
+                  FROM event_registration_correction_audit c
+                  LEFT JOIN tribes oldt ON oldt.id=c.old_tribe_id
+                  LEFT JOIN tribes newt ON newt.id=c.new_tribe_id
+                  LEFT JOIN admins a ON a.id=c.admin_id
+                  WHERE c.event_id=? ORDER BY c.id DESC LIMIT 80''',(ev['id'],))]
         ev['warnings']=[dict(w) for w in db.execute('''SELECT w.id,w.player_id,p.name AS player_name,w.note,w.created_at, a.username AS admin_name
                    FROM event_player_warnings w JOIN players p ON p.id=w.player_id
                    LEFT JOIN admins a ON a.id=w.admin_id WHERE w.event_id=? ORDER BY w.id DESC''',(ev['id'],))]
@@ -1261,6 +1290,88 @@ def list_league_events(db):
         ev['status'] = ('closed' if ev['ended_at'] else 'active' if ev['active_round'] else 'scheduled')
     return events
 
+
+
+def correct_closed_event_registration(db, event_id, registration_id, obj, admin_id):
+    """Corrige inscrição e snapshots oficiais do mesmo evento, atomicamente.
+
+    V/E/D são preservados. A pontuação é recalculada pelas regras da tribo
+    corrigida, inclusive exclusões da temporada.
+    """
+    ev=db.execute('SELECT id,name,ended_at FROM league_events WHERE id=?',(event_id,)).fetchone()
+    if not ev:raise UserInputError('Evento não encontrado.')
+    if not ev['ended_at']:raise UserInputError('Essa correção é exclusiva de eventos encerrados.')
+    reg=db.execute('SELECT * FROM event_registrations WHERE id=? AND event_id=?',
+                   (registration_id,event_id)).fetchone()
+    if not reg:raise UserInputError('Inscrição não encontrada neste evento.')
+    if obj.get('confirmation') != 'CORRIGIR INSCRICAO':
+        raise UserInputError('Confirmação ausente: correção do histórico não autorizada.')
+    reason=txt(obj.get('reason'),'Motivo da correção',300)
+    if 'tribe_id' not in obj or 'deck_id' not in obj:
+        raise UserInputError('Informe a tribo e a decklist (ou selecione Sem decklist).')
+    tribe_id=int_id(obj['tribe_id'],'Tribo')
+    if not exists(db,'tribes',tribe_id):raise UserInputError('Tribo não cadastrada.')
+    deck_id=None
+    new_deck=obj.get('new_deck')
+    if new_deck is not None:
+        if obj['deck_id'] not in (None,''):
+            raise UserInputError('Escolha uma decklist existente ou cadastre uma nova URL.')
+        if not isinstance(new_deck,dict):
+            raise UserInputError('Os dados da nova decklist são inválidos.')
+        pid,tid,name,url=validated_deck(db,{'player_id':reg['player_id'],
+            'tribe_id':tribe_id,'name':new_deck.get('name'),'url':new_deck.get('url')})
+        existing=db.execute('''SELECT id FROM decks WHERE player_id=? AND tribe_id=? AND url=?
+            ORDER BY id LIMIT 1''',(pid,tid,url)).fetchone()
+        if existing:
+            deck_id=existing['id']
+        else:
+            inert_hash=hashlib.sha256(secrets.token_bytes(32)).hexdigest()
+            deck_id=db.execute('''INSERT INTO decks(player_id,tribe_id,name,url,edit_token_hash)
+                VALUES(?,?,?,?,?)''',(pid,tid,name,url,inert_hash)).lastrowid
+    elif obj['deck_id'] not in (None,''):
+        deck_id=int_id(obj['deck_id'],'Decklist')
+        deck=db.execute('SELECT player_id,tribe_id FROM decks WHERE id=?',(deck_id,)).fetchone()
+        if not deck or deck['player_id']!=reg['player_id'] or deck['tribe_id']!=tribe_id:
+            raise UserInputError('A decklist deve pertencer ao jogador e à tribo selecionados.')
+    decklist_ok=event_status_field(obj.get('decklist_ok',False),'Decklist conferida')
+    if (tribe_id,deck_id,decklist_ok)==(reg['tribe_id'],reg['deck_id'],reg['decklist_ok']):
+        raise UserInputError('Nenhuma alteração foi realizada.')
+    # Identificadores selecionados por event_id + player_id, não apenas por data.
+    pairing_ids=[r['id'] for r in db.execute('''SELECT pp.id FROM event_pairing_players pp
+        JOIN event_rounds rd ON rd.id=pp.round_id
+        WHERE rd.event_id=? AND pp.player_id=?''',(event_id,reg['player_id']))]
+    table_entry_ids=[r['id'] for r in db.execute('''SELECT gte.id FROM game_table_entries gte
+        JOIN game_tables gt ON gt.id=gte.table_id
+        JOIN event_pairings ep ON ep.id=gt.pairing_id
+        JOIN event_rounds rd ON rd.id=ep.round_id
+        WHERE rd.event_id=? AND gte.player_id=?''',(event_id,reg['player_id']))]
+    match_ids=[r['id'] for r in db.execute('''SELECT m.id FROM matches m
+        JOIN game_tables gt ON gt.id=m.table_id
+        JOIN event_pairings ep ON ep.id=gt.pairing_id
+        JOIN event_rounds rd ON rd.id=ep.round_id
+        WHERE rd.event_id=? AND m.player_id=?''',(event_id,reg['player_id']))]
+    db.execute('UPDATE event_registrations SET tribe_id=?,deck_id=?,decklist_ok=? WHERE id=?',
+               (tribe_id,deck_id,decklist_ok,registration_id))
+    changed_lineup=(tribe_id,deck_id)!=(reg['tribe_id'],reg['deck_id'])
+    if changed_lineup:
+        for target,ids in [('event_pairing_players',pairing_ids),('game_table_entries',table_entry_ids),('matches',match_ids)]:
+            for ident in ids:
+                db.execute(f'UPDATE {target} SET tribe_id=?,deck_id=? WHERE id=?',
+                           (tribe_id,deck_id,ident))
+    db.execute('''INSERT INTO event_registration_correction_audit
+        (event_id,registration_id,player_id,admin_id,old_tribe_id,new_tribe_id,
+         old_deck_id,new_deck_id,old_decklist_ok,new_decklist_ok,
+         affected_pairings,affected_tables,affected_matches,reason)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+         (event_id,registration_id,reg['player_id'],admin_id,reg['tribe_id'],tribe_id,
+          reg['deck_id'],deck_id,reg['decklist_ok'],decklist_ok,
+          len(pairing_ids) if changed_lineup else 0,
+          len(table_entry_ids) if changed_lineup else 0,
+          len(match_ids) if changed_lineup else 0,reason))
+    db.execute('UPDATE league_events SET updated_at=CURRENT_TIMESTAMP WHERE id=?',(event_id,))
+    return {'ok':True,'pairings_updated':len(pairing_ids) if changed_lineup else 0,
+            'tables_updated':len(table_entry_ids) if changed_lineup else 0,
+            'matches_updated':len(match_ids) if changed_lineup else 0,'event_id':event_id}
 
 
 def event_round_list(db, event_id, published_only=False, include_admin_results=False):
@@ -2793,6 +2904,15 @@ class Handler(BaseHTTPRequestHandler):
                                      (event_id,player_id,tribe_id,deck_id))
                     db.commit()
                     return self.respond(201,{'ok':True,'id':cur.lastrowid})
+                correction_route=re.fullmatch(r'/api/admin/events/(\d+)/registrations/(\d+)/correct',path)
+                if correction_route and method=='POST':
+                    # Mudanças históricas influenciam o ranking; exclusiva do master.
+                    if admin['role']!='owner':
+                        return self.respond(403,{'error':'A correção pós-evento é exclusiva do administrador principal.'})
+                    event_id,reg_id=map(int,correction_route.groups())
+                    result=correct_closed_event_registration(db,event_id,reg_id,obj,admin['id'])
+                    db.commit()
+                    return self.respond(200,result)
                 reg_match = re.fullmatch(r'/api/admin/events/(\d+)/registrations/(\d+)',path)
                 if reg_match and method in ('PUT','DELETE'):
                     event_id = int(reg_match.group(1))

@@ -809,20 +809,79 @@ Todas as rodadas devem estar finalizadas. O evento não aceitará inscrições n
   renderEventRounds();
   if(!ev)return;
   const tribes=state.admin?.master?.tribes||[];
+  const canCorrectClosed=Boolean(ev.ended_at && state.canManageAdmins);
+  const allDecks=state.admin?.decks||state.public?.decks||[];
   $('eventRosterRows').innerHTML=ev.registrations.length?ev.registrations.map(r=>`<tr>
-    <td><strong>${safe(r.player_name)}</strong>${r.dropped_after_round!==null?`<small class="event-dropped">Drop após rodada ${r.dropped_after_round}</small>`:''}${r.deck_url?`<small class="event-deck-small"><a href="${safe(r.deck_url)}" target="_blank" rel="noopener noreferrer">▤ ${safe(r.deck_name)} ↗</a></small>`:''}</td>
-    <td><select class="event-tribe-select" data-event-tribe="${r.id}" aria-label="Tribo de ${safe(r.player_name)}">${tribes.map(t=>`<option value="${t.id}" ${t.id===r.tribe_id?'selected':''}>${safe(t.name)}</option>`).join('')}</select></td>
-    <td><button type="button" class="event-toggle ${r.checkin?'on':''}" data-event-toggle="${r.id}" data-field="checkin" aria-pressed="${Boolean(r.checkin)}" title="${r.checkin?'Check-in confirmado':'Check-in pendente'}"><span aria-hidden="true">${r.checkin?'✓':'○'}</span><small>${r.checkin?'Feito':'Pendente'}</small></button></td>
-    <td><button type="button" class="event-toggle ${r.paid?'on':''}" data-event-toggle="${r.id}" data-field="paid" aria-pressed="${Boolean(r.paid)}" title="${r.paid?'Pagamento confirmado':'Pagamento pendente'}"><span aria-hidden="true">${r.paid?'✓':'○'}</span><small>${r.paid?'Pago':'Pendente'}</small></button></td>
-    <td><button type="button" class="event-toggle ${r.decklist_ok?'on':''}" data-event-toggle="${r.id}" data-field="decklist_ok" aria-pressed="${Boolean(r.decklist_ok)}" title="${r.decklist_ok?'Decklist aprovada':'Decklist ainda não aprovada'}"><span aria-hidden="true">${r.decklist_ok?'✓':'✕'}</span><small>${r.decklist_ok?'OK':'Não'}</small></button></td>
+    <td><strong>${safe(r.player_name)}</strong>${r.dropped_after_round!==null?`<small class="event-dropped">Drop após rodada ${r.dropped_after_round}</small>`:''}${r.deck_url?`<small class="event-deck-small"><a href="${safe(r.deck_url)}" target="_blank" rel="noopener noreferrer">▤ ${safe(r.deck_name)} ↗</a></small>`:''}${ev.ended_at && (ev.corrections||[]).some(c=>c.registration_id===r.id)?'<small class="event-correction-note">✓ Correção pós-evento registrada</small>':''}</td>
+    <td><select class="event-tribe-select" data-event-tribe="${r.id}" aria-label="Tribo de ${safe(r.player_name)}" ${ev.ended_at?'disabled title="Use Ações → Corrigir inscrição (master)"':''}>${tribes.map(t=>`<option value="${t.id}" ${t.id===r.tribe_id?'selected':''}>${safe(t.name)}</option>`).join('')}</select></td>
+    <td><button type="button" class="event-toggle ${r.checkin?'on':''}" data-event-toggle="${r.id}" data-field="checkin" aria-pressed="${Boolean(r.checkin)}" ${ev.ended_at?'disabled':''} title="${r.checkin?'Check-in confirmado':'Check-in pendente'}"><span aria-hidden="true">${r.checkin?'✓':'○'}</span><small>${r.checkin?'Feito':'Pendente'}</small></button></td>
+    <td><button type="button" class="event-toggle ${r.paid?'on':''}" data-event-toggle="${r.id}" data-field="paid" aria-pressed="${Boolean(r.paid)}" ${ev.ended_at?'disabled':''} title="${r.paid?'Pagamento confirmado':'Pagamento pendente'}"><span aria-hidden="true">${r.paid?'✓':'○'}</span><small>${r.paid?'Pago':'Pendente'}</small></button></td>
+    <td><button type="button" class="event-toggle ${r.decklist_ok?'on':''}" data-event-toggle="${r.id}" data-field="decklist_ok" aria-pressed="${Boolean(r.decklist_ok)}" ${ev.ended_at?'disabled':''} title="${r.decklist_ok?'Decklist aprovada':'Decklist ainda não aprovada'}"><span aria-hidden="true">${r.decklist_ok?'✓':'✕'}</span><small>${r.decklist_ok?'OK':'Não'}</small></button></td>
     <td><span class="muted-note">${r.has_player_access?'Conta registrada':'Cadastro próprio'}</span></td>
     <td><details class="event-actions-menu"><summary aria-label="Ações do jogador ${safe(r.player_name)}">Ações ▾</summary><div class="event-actions-dropdown">
-      <button type="button" data-event-remove="${r.id}">Remover jogador do torneio</button>
-      <button type="button" data-event-drop="${r.id}">${r.dropped_after_round===null?'Dropar após a rodada atual':'Reativar para próximas rodadas'}</button>
-      <button type="button" data-event-warning="${r.id}">Registrar warning (${ev.warnings.filter(w=>w.player_id===r.player_id).length})</button>
-      ${ev.warnings.filter(w=>w.player_id===r.player_id).map(w=>`<small class="event-warning-note">⚠ ${safe(w.note)}<br>${safe(w.admin_name||'Organização')} · ${safe(fmtDate((w.created_at||'').slice(0,10)))}</small>`).join('')}
+      ${ev.ended_at ? (canCorrectClosed?`<button type="button" data-event-correct-open="${r.id}">✎ Corrigir tribo / decklist</button>
+        <form class="event-correction-form hidden" data-event-correct-form="${r.id}">
+          <strong>Correção após encerramento</strong>
+          <label>Tribo<select data-event-correct-tribe="${r.id}" required>${tribes.map(t=>`<option value="${t.id}" ${t.id===r.tribe_id?'selected':''}>${safe(t.name)}</option>`).join('')}</select></label>
+          <label>Decklist vinculada<select data-event-correct-deck="${r.id}"><option value="">Sem decklist</option></select></label>
+          <div class="event-correction-new hidden" data-event-correct-new="${r.id}">
+            <label>Nome da nova decklist<input data-event-correct-name="${r.id}" maxlength="100" placeholder="Nome do deck"/></label>
+            <label>Link HTTPS da decklist<input data-event-correct-url="${r.id}" type="url" maxlength="700" placeholder="https://..."/></label>
+          </div>
+          <label class="event-correction-checkbox"><input type="checkbox" data-event-correct-ok="${r.id}" ${r.decklist_ok?'checked':''}/> Decklist conferida</label>
+          <label>Motivo da correção<textarea rows="2" data-event-correct-reason="${r.id}" maxlength="300" required placeholder="Ex.: Tribo incorreta na inscrição"></textarea></label>
+          <small>O histórico deste evento e o ranking serão atualizados. V/E/D permanecem iguais. Uma nova URL cria uma decklist independente, sem alterar as dos outros eventos.</small>
+          <button type="submit" class="event-correction-submit">Salvar correção</button>
+        </form>`:'<small class="muted-note">Somente o administrador principal pode corrigir inscrições de eventos encerrados.</small>'):
+        `<button type="button" data-event-remove="${r.id}">Remover jogador do torneio</button>
+        <button type="button" data-event-drop="${r.id}">${r.dropped_after_round===null?'Dropar após a rodada atual':'Reativar para próximas rodadas'}</button>
+        <button type="button" data-event-warning="${r.id}">Registrar warning (${ev.warnings.filter(w=>w.player_id===r.player_id).length})</button>`}
+      ${ev.warnings.filter(w=>w.player_id===r.player_id).map(w=>`<small class="event-warning-note">⚠ ${safe(w.note)} · ${safe(w.admin_name||'Organização')}</small>`).join('')}
+      ${(ev.corrections||[]).filter(c=>c.registration_id===r.id).slice(0,3).map(c=>`<small class="event-correction-audit">✓ ${safe(c.old_tribe_name)} → ${safe(c.new_tribe_name)} · ${safe(c.admin_name||'Organização')}<br>${safe(c.reason)}</small>`).join('')}
     </div></details></td>
   </tr>`).join(''):'<tr><td class="empty" colspan="7">Nenhum jogador inscrito neste evento.</td></tr>';
+  if(canCorrectClosed){
+    $('eventRosterRows').querySelectorAll('[data-event-correct-form]').forEach(form=>{
+      const id=Number(form.dataset.eventCorrectForm);
+      const r=ev.registrations.find(x=>x.id===id);
+      const tribe=form.querySelector('[data-event-correct-tribe]');
+      const deck=form.querySelector('[data-event-correct-deck]');
+      const verified=form.querySelector('[data-event-correct-ok]');
+      const reason=form.querySelector('[data-event-correct-reason]');
+      const newBox=form.querySelector('[data-event-correct-new]');
+      const newName=form.querySelector('[data-event-correct-name]');
+      const newUrl=form.querySelector('[data-event-correct-url]');
+      const refreshNewInputs=()=>{
+        const creating=deck.value==='__new__';newBox.classList.toggle('hidden',!creating);
+        newName.required=creating;newUrl.required=creating;
+      };
+      const refreshDecks=(desired=null)=>{
+        const choices=allDecks.filter(d=>d.player_id===r.player_id && String(d.tribe_id)===tribe.value);
+        deck.innerHTML='<option value="">Sem decklist</option>'+choices.map(d=>`<option value="${d.id}">${safe(d.name)}</option>`).join('')+'<option value="__new__">＋ Cadastrar nova decklist por link</option>';
+        if(desired && choices.some(d=>String(d.id)===String(desired)))deck.value=String(desired);
+        else {deck.value='';if(desired)verified.checked=false}
+        refreshNewInputs();
+      };
+      refreshDecks(r.deck_id);
+      tribe.addEventListener('change',()=>{verified.checked=false;refreshDecks()});
+      deck.addEventListener('change',()=>{if(String(deck.value)!==String(r.deck_id||''))verified.checked=false;refreshNewInputs()});
+      const open=$('eventRosterRows').querySelector(`[data-event-correct-open="${id}"]`);
+      open?.addEventListener('click',()=>form.classList.toggle('hidden'));
+      form.addEventListener('submit',async e=>{
+        e.preventDefault();
+        const explanation=reason.value.trim();
+        if(!explanation)return toast('Informe o motivo da correção.',true);
+        const tribeName=tribe.options[tribe.selectedIndex]?.textContent||'';
+        if(!confirm(`Corrigir a inscrição de ${r.player_name} no evento encerrado "${ev.name}"?\n\nNova tribo: ${tribeName}\nDecklist: ${deck.options[deck.selectedIndex]?.textContent||'Sem decklist'}\n\nA correção altera a tribo/deck nas rodadas deste evento e recalcula o ranking, sem mudar V/E/D. Confirma?`))return;
+        const button=form.querySelector('button[type="submit"]');button.disabled=true;
+        try{
+          await api(`/api/admin/events/${ev.id}/registrations/${r.id}/correct`,{method:'POST',body:{tribe_id:Number(tribe.value),deck_id:deck.value==='__new__'?null:(deck.value||null),new_deck:deck.value==='__new__'?{name:newName.value.trim(),url:newUrl.value.trim()}:undefined,decklist_ok:verified.checked,reason:explanation,confirmation:'CORRIGIR INSCRICAO'}});
+          await loadLeagueEvents();await loadPublic();await loadAdmin();
+          toast('Inscrição corrigida; ranking e histórico atualizados.');
+        }catch(err){toast(err.message,true);button.disabled=false}
+      });
+    });
+  }
   $('eventRosterRows').querySelectorAll('[data-event-toggle]').forEach(btn=>btn.addEventListener('click',async()=>{
     const registration=ev.registrations.find(x=>x.id===Number(btn.dataset.eventToggle));if(!registration)return;
     const field=btn.dataset.field;
