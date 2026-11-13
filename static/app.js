@@ -138,7 +138,7 @@ new MutationObserver(()=>{
 function renderPublic(){
   const d=state.public;
   if(!d)return;
-  const summaries=[['Inscrições',d.summary.ranking_entries,'♙','Uma por jogador e tribo utilizada'],['Partidas',d.summary.matches,'⚔','Participações em rodadas'],['Tribos',d.summary.tribes,'♜','Utilizadas no período'],['Eventos',d.summary.events,'◎','Datas/etapas registradas'],['Pontos válidos',d.summary.points,'✦','Exclui tribos bloqueadas']];
+  const summaries=[['Inscrições',d.summary.ranking_entries,'♙','Uma por jogador e tribo utilizada'],['Participações',d.summary.matches,'⚔','Resultados individuais registrados nas rodadas'],['Tribos',d.summary.tribes,'♜','Utilizadas no período'],['Eventos',d.summary.events,'◎','Datas/etapas registradas'],['Pontos válidos',d.summary.points,'✦','Exclui tribos bloqueadas']];
   $('statsGrid').innerHTML=summaries.map(([name,val,ico,note])=>`<article class="stat"><span class="st-icon">${ico}</span><span class="st-label">${name.toUpperCase()}</span><strong>${intFmt(val)}</strong><div class="st-info">${note}</div></article>`).join('');
   renderRanking();renderTribes();renderMatches();renderTrend();
   $('ruleNote').innerHTML=`<strong>REGRAS DE PONTUAÇÃO</strong> · Vitória: 3 pontos · Empate: 1 ponto · Derrota: 0 ponto. ${d.summary.excluded_matches ? `<strong>${intFmt(d.summary.excluded_matches)} resultado(s)</strong> de tribos não pontuantes foram mantidos no histórico, sem somar pontos.` : ''} As tribos bloqueadas são definidas individualmente por temporada.`;
